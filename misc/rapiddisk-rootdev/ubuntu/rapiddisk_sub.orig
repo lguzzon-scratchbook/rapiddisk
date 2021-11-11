@@ -1,9 +1,10 @@
 #!/bin/sh
 
+modprobe -v dm-writecache
 modprobe -v rapiddisk
 modprobe -v rapiddisk-cache
 
 rapiddisk -a RAMDISKSIZE
-rapiddisk -m rd0 -b BOOTDEVICE -p wa
+rapiddisk -m rd0 -b BOOTDEVICE -p wb
 
 exit 0
