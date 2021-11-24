@@ -13,6 +13,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: Install C libs
+      run: sudo apt -y install libjansson-dev libmicrohttpd-dev
     # - name: configure
     #   run: ./configure
     - name: make
