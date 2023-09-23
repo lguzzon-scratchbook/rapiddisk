@@ -4,7 +4,15 @@ modprobe -v dm-writecache
 modprobe -v rapiddisk
 modprobe -v rapiddisk-cache
 
-rapiddisk -a RAMDISKSIZE
+RD_ALL=RAMDISKSIZE
+
+RBOOT=$((RD_ALL / 3))
+rapiddisk -a $RBOOT
+
+RDATA=$((RD_ALL - RBOOT))
+rapiddisk -a $RDATA
+
 rapiddisk -m rd0 -b BOOTDEVICE -p wb
+rapiddisk -m rd1 -b /dev/vdb -p wb
 
 exit 0
