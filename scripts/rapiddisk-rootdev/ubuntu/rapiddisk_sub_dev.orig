@@ -36,11 +36,11 @@ if ! rapiddisk >/dev/null 2>&1 -m rd0 -b BOOTDEVICE -p CACHEMODE ; then
 	exit 0
 fi
 
-if ! rapiddisk >/dev/null 2>&1 -m rd1 -b /dev/vdb -p CACHEMODE ; then
+if ! rapiddisk >/dev/null 2>&1 -m rd1 -b PRIMARYDEVICE -p CACHEMODE ; then
 	rapiddisk >/dev/null 2>&1 -d rd0
 	rapiddisk >/dev/null 2>&1 -d rd1
 	rapiddisk >/dev/null 2>&1 -d rd2
-	log_end_msg "rapiddisk: attaching of the ramdisk failed [/dev/vdb]"
+	log_end_msg "rapiddisk: attaching of the ramdisk failed [PRIMARYDEVICE]"
 	exit 0
 fi
 
