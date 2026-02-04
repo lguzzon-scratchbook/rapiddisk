@@ -3,7 +3,7 @@
  * @brief Daemon defines
  * @details This header file defines some constants used by the daemon
  * @copyright @verbatim
-Copyright © 2011 - 2023 Petros Koutoupis
+Copyright © 2011 - 2025 Petros Koutoupis
 
 All rights reserved.
 
@@ -26,8 +26,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 @endverbatim
  * @author Petros Koutoupis \<petros\@petroskoutoupis.com\>
  * @author Matteo Tenca \<matteo.tenca\@gmail.com\>
- * @version 9.1.0
- * @date 23 April 2023
+ * @version 9.2.0
+ * @date 15 March 2025
  */
 
 #ifndef DAEMON_H
@@ -57,7 +57,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 #define D_STDOUT_LOG		"/tmp/rapiddiskd_out.log"
 #define D_EXITING		"Daemon exiting."
 #define D_STARTING		"Starting daemon..."
-#define D_RECV_REQ		"Recevied request '%s'."
+#define D_RECV_REQ		"Received request '%s'."
 #define D_LOOP_EXITING		"Daemon loop function exiting: %s."
 #define D_SIGNAL_RECEIVED	"Signal_handler function, SIGNAL received: %s."
 

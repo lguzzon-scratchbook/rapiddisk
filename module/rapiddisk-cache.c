@@ -1,5 +1,5 @@
 /*******************************************************************************
- ** Copyright © 2011 - 2023 Petros Koutoupis
+ ** Copyright © 2011 - 2025 Petros Koutoupis
  ** All rights reserved.
  **
  ** This program is free software: you can redistribute it and/or modify
@@ -54,7 +54,7 @@
 	} \
 } while (0)
 
-#define VERSION_STR	"9.1.0"
+#define VERSION_STR	"9.2.0"
 #define DM_MSG_PREFIX	"rapiddisk-cache"
 
 #define READCACHE	1
@@ -162,6 +162,21 @@ static void cache_write(struct cache_context *, struct bio *);
 static int cache_invalidate_blocks(struct cache_context *, struct bio *);
 static void rc_uncached_io_callback(unsigned long, void *);
 static void rc_start_uncached_io(struct cache_context *, struct bio *);
+void rc_io_callback(unsigned long, void *);
+int rc_do_complete(struct kcached_job *);
+void kcached_client_destroy(struct cache_context *);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0)
+int rc_map(struct dm_target *, struct bio *);
+#else
+int rc_map(struct dm_target *, struct bio *, union map_info *);
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0)
+int dm_io_async_bvec(unsigned int, struct dm_io_region *, int, struct bio *, io_notify_fn, void *);
+#else
+int dm_io_async_bvec(unsigned int, struct dm_io_region *, int, struct bio_vec *, io_notify_fn, void *);
+#endif
+int __init rc_init(void);
+void rc_exit(void);
 
 int dm_io_async_bvec(unsigned int num_regions, struct dm_io_region *where,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0)
@@ -199,7 +214,14 @@ int dm_io_async_bvec(unsigned int num_regions, struct dm_io_region *where,
 	iorq.notify.context = context;
 	iorq.client = dmc->io_client;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6,8,2)) || \
+	((LINUX_VERSION_CODE >= KERNEL_VERSION(6,7,11)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6,8,0))) || \
+	((LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,23)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6,7,0))) || \
+	((LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,83)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)))
+	return dm_io(&iorq, num_regions, where, NULL, IOPRIO_DEFAULT);
+#else
 	return dm_io(&iorq, num_regions, where, NULL);
+#endif
 }
 
 static int jobs_init(void)
@@ -1023,7 +1045,11 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			goto construct_fail5;
 		}
 	} else {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,11,0)
+		dmc->size = bdev_nr_sectors(dmc->cache_dev->bdev);
+#else
 		dmc->size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
+#endif
 	}
 
 	if (argc >= 4) {
@@ -1059,7 +1085,11 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	do_div(tmpsize, dmc->assoc);
 	dmc->size = tmpsize * dmc->assoc;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,11,0)
+	dev_size = bdev_nr_sectors(dmc->cache_dev->bdev);
+#else
 	dev_size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
+#endif
 	data_size = dmc->size * dmc->block_size;
 	if (data_size > dev_size) {
 		DMERR("Requested cache size exceeds the cache device's capacity (%lu>%lu)",
@@ -1252,7 +1282,7 @@ cache_status(struct dm_target *ti, status_type_t type, unsigned status_flags,
 
 static struct target_type cache_target = {
 	.name    = "rapiddisk-cache",
-	.version = {9, 1, 0},
+	.version = {9, 2, 0},
 	.module  = THIS_MODULE,
 	.ctr	 = cache_ctr,
 	.dtr	 = cache_dtr,
@@ -1294,4 +1324,4 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Petros Koutoupis <petros@petroskoutoupis.com>");
 MODULE_DESCRIPTION("RapidDisk-Cache DM target is a write-through caching target with RapidDisk volumes.");
 MODULE_VERSION(VERSION_STR);
-MODULE_INFO(Copyright, "Copyright 2010 - 2023 Petros Koutoupis");
+MODULE_INFO(Copyright, "Copyright 2010 - 2025 Petros Koutoupis");
