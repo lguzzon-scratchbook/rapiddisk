@@ -14,7 +14,7 @@ rapiddisk_Uninstall() {
     && ( (which git >/dev/null 2>&1) || sudo apt -y install git) \
     && cd "$HOME" \
     && (rm -Rf rapiddisk || true) \
-    && git clone https://github.com/lguzzon-scratchbook/rapiddisk.git \
+    && git clone -b lastWorking https://github.com/lguzzon-scratchbook/rapiddisk.git \
     && cd rapiddisk \
     && cd scripts/rapiddisk-rootdev \
     && ./rapiddisk-on-boot --global-uninstall --force \
