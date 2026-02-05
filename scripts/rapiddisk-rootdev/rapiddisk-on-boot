@@ -340,17 +340,21 @@ elif [ "$os_name" = "ubuntu" ] ; then
 	echo " - Ubuntu detected!"
 	# prepare some vars
 	hooks_dir="/usr/share/initramfs-tools/hooks"
-	scripts_dir="/usr/share/initramfs-tools/scripts/init-premount"
+	scripts_dir="/usr/share/initramfs-tools"
 	alt_scripts_dir="/usr/share/initramfs-tools/scripts/local-bottom"
+	config_dir="/etc/rapiddisk"
 	if [ ! -d "$hooks_dir" -o ! -d "$scripts_dir" -o ! -d "$alt_scripts_dir" ] ; then
 		myerror "I can't find any suitable place to write initramfs' scripts."
 	fi
+	if [ ! -d "$config_dir" ] ; then
+		mkdir -p "$config_dir"
+	fi
 	hook_dest="${hooks_dir}/rapiddisk_hook"
 	bootscript_dest="${scripts_dir}/rapiddisk_boot"
-	subscript_dest_orig="${hooks_dir}/rapiddisk_sub.orig"
+	subscript_dest_orig="${config_dir}/rapiddisk_sub.orig"
 	cleanscript_dest_orig="${alt_scripts_dir}/rapiddisk_clean"
 	kernel_version_file="rapiddisk_kernel_${kernel_version}"
-	kernel_version_file_dest="${hooks_dir:?}/${kernel_version_file:?}"
+	kernel_version_file_dest="${config_dir}/${kernel_version_file}"
 	# what should we do?
 	if [ "$install_mode" = "simple_install" ] ; then
 		# installing on Ubuntu
@@ -392,6 +396,8 @@ elif [ "$os_name" = "ubuntu" ] ; then
 	elif [ "$install_mode" = "global_uninstall" ] ; then
 		echo " - Global uninstalling for all kernel versions.."
 		echo " - Deleting all files and rebuilding all the initrd files.."
+		rm -f "${config_dir:?}"/rapiddisk_kernel_*
+		rmdir "${config_dir}" 2>/dev/null || true
 		rm -f "${hooks_dir:?}"/rapiddisk_kernel_*
 		rm -f "${hook_dest}" 2>/dev/null
 		rm -f "${bootscript_dest}" 2>/dev/null
