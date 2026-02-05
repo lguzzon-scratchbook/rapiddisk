@@ -32,7 +32,7 @@ rapiddisk_Install() {
         && ( ( ! (grep -q "rapiddisk-cache" "/etc/modules") && echo "rapiddisk-cache" >>"/etc/modules") || true) \
         && cd "$HOME" \
         && (rm -Rf rapiddisk || true) \
-        && git clone https://github.com/lguzzon-scratchbook/rapiddisk.git \
+        && git clone -b lastWorking https://github.com/lguzzon-scratchbook/rapiddisk.git \
         && cd rapiddisk \
         && make \
         && make install \
