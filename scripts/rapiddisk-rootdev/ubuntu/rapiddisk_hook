@@ -22,7 +22,7 @@ for i in "${config_dir}"/rapiddisk_kernel_*
 			device="$(head -n 2 "$i" | tail -n 1)"
 			cache_mode="$(tail -n 1 "$i")"
 			cwd="$(dirname "$0")"
-			cp "${cwd}/rapiddisk_sub.orig" "${cwd}/rapiddisk_sub"
+			cp "${config_dir}/rapiddisk_sub.orig" "${cwd}/rapiddisk_sub"
 			sed -i 's,RAMDISKSIZE,'"$size"',g' "${cwd}/rapiddisk_sub"
 			sed -i 's,BOOTDEVICE,'"$device"',g' "${cwd}/rapiddisk_sub"
 			sed -i 's,CACHEMODE,'"$cache_mode"',g' "${cwd}/rapiddisk_sub"

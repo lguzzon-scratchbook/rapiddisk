@@ -351,7 +351,7 @@ elif [ "$os_name" = "ubuntu" ] ; then
 	fi
 	hook_dest="${hooks_dir}/rapiddisk_hook"
 	bootscript_dest="${scripts_dir}/rapiddisk_boot"
-	subscript_dest_orig="${hooks_dir}/rapiddisk_sub.orig"
+	subscript_dest_orig="${config_dir}/rapiddisk_sub.orig"
 	cleanscript_dest_orig="${alt_scripts_dir}/rapiddisk_clean"
 	kernel_version_file="rapiddisk_kernel_${kernel_version}"
 	kernel_version_file_dest="${config_dir}/${kernel_version_file}"
