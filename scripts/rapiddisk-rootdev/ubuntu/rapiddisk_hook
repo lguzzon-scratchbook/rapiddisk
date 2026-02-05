@@ -14,13 +14,14 @@ esac
 
 . /usr/share/initramfs-tools/hook-functions
 # Begin real processing below this line
-cwd="$(dirname "$0")"
-for i in "$cwd"/rapiddisk_kernel_*
+config_dir="/etc/rapiddisk"
+for i in "${config_dir}"/rapiddisk_kernel_*
 	do
-		if [ "${cwd}/rapiddisk_kernel_${version}" = "$i" ] ; then
+		if [ "${config_dir}/rapiddisk_kernel_${version}" = "$i" ] ; then
 			size="$(head -n 1 "$i")"
 			device="$(head -n 2 "$i" | tail -n 1)"
 			cache_mode="$(tail -n 1 "$i")"
+			cwd="$(dirname "$0")"
 			cp "${cwd}/rapiddisk_sub.orig" "${cwd}/rapiddisk_sub"
 			sed -i 's,RAMDISKSIZE,'"$size"',g' "${cwd}/rapiddisk_sub"
 			sed -i 's,BOOTDEVICE,'"$device"',g' "${cwd}/rapiddisk_sub"
