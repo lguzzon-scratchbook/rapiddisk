@@ -1,5 +1,5 @@
 /*******************************************************************************
- ** Copyright © 2011 - 2023 Petros Koutoupis
+ ** Copyright © 2011 - 2025 Petros Koutoupis
  ** All rights reserved.
  **
  ** This program is free software: you can redistribute it and/or modify
@@ -41,7 +41,7 @@
 #include <linux/radix-tree.h>
 #include <linux/io.h>
 
-#define VERSION_STR		"9.1.0"
+#define VERSION_STR		"9.2.0"
 #define PREFIX			"rapiddisk"
 #define BYTES_PER_SECTOR	512
 #define MAX_RDSKS		1024
@@ -249,7 +249,11 @@ static struct page *rdsk_lookup_page(struct rdsk_device *rdsk, sector_t sector)
 	page = radix_tree_lookup(&rdsk->rdsk_pages, idx);
 	rcu_read_unlock();
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
+	BUG_ON(page && page_folio(page)->index != idx);
+#else
 	BUG_ON(page && page->index != idx);
+#endif
 
 	return page;
 }
@@ -285,12 +289,20 @@ static struct page *rdsk_insert_page(struct rdsk_device *rdsk, sector_t sector)
 
 	spin_lock(&rdsk->rdsk_lock);
 	idx = sector >> PAGE_SECTORS_SHIFT;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
+	page_folio(page)->index = idx;
+#else
 	page->index = idx;
+#endif
 	if (radix_tree_insert(&rdsk->rdsk_pages, idx, page)) {
 		__free_page(page);
 		page = radix_tree_lookup(&rdsk->rdsk_pages, idx);
 		BUG_ON(!page);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
+		BUG_ON(page_folio(page)->index != idx);
+#else
 		BUG_ON(page->index != idx);
+#endif
 	}
 	spin_unlock(&rdsk->rdsk_lock);
 
@@ -329,8 +341,13 @@ static void rdsk_free_pages(struct rdsk_device *rdsk)
 		for (i = 0; i < nr_pages; i++) {
 			void *ret;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
+			BUG_ON(page_folio(pages[i])->index < pos);
+			pos = page_folio(pages[i])->index;
+#else
 			BUG_ON(pages[i]->index < pos);
 			pos = pages[i]->index;
+#endif
 			ret = radix_tree_delete(&rdsk->rdsk_pages, pos);
 			BUG_ON(!ret || ret != pages[i]);
 			__free_page(pages[i]);
@@ -648,11 +665,13 @@ out:
 	return;
 #endif
 #endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,3,0)
 io_error:
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
 	bio->bi_status= err;
 #else
 	bio->bi_error = err;
+#endif
 #endif
 	bio_io_error(bio);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
@@ -805,21 +824,27 @@ static int attach_device(unsigned long num, unsigned long long size)
 	blk_queue_make_request(rdsk->rdsk_queue, rdsk_make_request);
 #endif
 #endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
+	disk = rdsk->rdsk_disk = blk_alloc_disk(NULL, NUMA_NO_NODE);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
 	disk = rdsk->rdsk_disk = blk_alloc_disk(NUMA_NO_NODE);
 #else
 	disk = rdsk->rdsk_disk = alloc_disk(1);
 #endif
-	if (!disk)
-		goto out_free_queue;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
-	disk = rdsk->rdsk_disk = blk_alloc_disk(NUMA_NO_NODE);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
+	if (IS_ERR(disk))
 #else
-	disk = rdsk->rdsk_disk = alloc_disk(1);
-#endif
 	if (!disk)
+#endif
 		goto out_free_queue;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,11,0)
+	struct request_queue *q = disk->queue;
+	struct queue_limits lim;
+	lim = queue_limits_start_update(q);
+	lim.logical_block_size = BYTES_PER_SECTOR;
+	lim.physical_block_size = PAGE_SIZE;
+	queue_limits_commit_update(q, &lim);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
 	blk_queue_logical_block_size(disk->queue, BYTES_PER_SECTOR);
 	blk_queue_physical_block_size(disk->queue, PAGE_SIZE);
 #else
@@ -827,7 +852,9 @@ static int attach_device(unsigned long num, unsigned long long size)
 	blk_queue_physical_block_size(rdsk->rdsk_queue, PAGE_SIZE);
 #endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,11,0)
+	blk_queue_write_cache(disk->queue);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
 	blk_queue_write_cache(disk->queue, false, false);
 #else
 	blk_queue_write_cache(rdsk->rdsk_queue, false, false);
@@ -843,12 +870,16 @@ static int attach_device(unsigned long num, unsigned long long size)
 	disk->queue->nr_requests = nr_requests;
 	disk->queue->limits.discard_granularity = PAGE_SIZE;
 	disk->queue->limits.max_discard_sectors = UINT_MAX;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0) || (defined(RHEL_MAJOR) && RHEL_MAJOR >= 9 && RHEL_MINOR >= 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,11,0)
+	blk_queue_disable_discard(disk->queue);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0) || (defined(RHEL_MAJOR) && RHEL_MAJOR >= 9 && RHEL_MINOR >= 0)
 	blk_queue_max_discard_sectors(disk->queue, 0);
 #else
 	blk_queue_flag_set(QUEUE_FLAG_DISCARD, disk->queue);
 #endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,11,0)
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, disk->queue);
+#endif
 #else
 	rdsk->rdsk_queue->limits.max_sectors = (max_sectors * 2);
 	rdsk->rdsk_queue->nr_requests = nr_requests;
@@ -1029,4 +1060,4 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Petros Koutoupis <petros@petroskoutoupis.com>");
 MODULE_DESCRIPTION("RapidDisk is an enhanced RAM disk block device driver.");
 MODULE_VERSION(VERSION_STR);
-MODULE_INFO(Copyright, "Copyright 2010 - 2023 Petros Koutoupis");
+MODULE_INFO(Copyright, "Copyright 2010 - 2025 Petros Koutoupis");
