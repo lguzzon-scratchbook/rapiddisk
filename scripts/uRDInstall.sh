@@ -1,66 +1,899 @@
 #!/bin/bash
+#
+# uRDInstall.sh - RapidDisk RAM disk cache installer for Ubuntu/Debian systems
+# Usage: sudo ./uRDInstall.sh [--skip-reboot|--verify|--debug]
+#
 
-rapiddisk_Install() {
-    local -r PRIMARY_DEV_TO_CACHE="${1-}"
-    local -r DEV_TO_CACHE="/dev/${PRIMARY_DEV_TO_CACHE}"
-    local -r HOST_MEMORY=$(free -k | grep 'Mem:' | awk '{print $2}')
-    echo "HOST_MEMORY ${HOST_MEMORY} KB"
-    # shellcheck disable=SC2017
-    local -r RAMDISK_MEMORY=$((HOST_MEMORY / 5))
-    echo "RAMDISK_MEMORY ${RAMDISK_MEMORY} KB"
-    local -r RAMDISK_MAX_MEMORY=$((1024 * 1024 * 4))
-    echo "RAMDISK_MAX_MEMORY ${RAMDISK_MAX_MEMORY} KB"
-    RAMDISK_MEMORY_RAPIDDISK=$(((RAMDISK_MEMORY > RAMDISK_MAX_MEMORY ? RAMDISK_MAX_MEMORY : RAMDISK_MEMORY) / 1024))
-    echo "RAMDISK_MEMORY_RAPIDDISK ${RAMDISK_MEMORY_RAPIDDISK} MB"
-    (
-        sudo dpkg --configure -a
-        DEBIAN_FRONTEND=noninteractive sudo apt-get -y -qq -o Dpkg::Options::=--force-all -f install
-        sudo rm -rf /var/lib/dpkg/lock-frontend
-        sudo rm -rf /var/lib/dpkg/lock
-        sudo rm -rf /var/cache/apt/archives/lock
-        true
-    ) \
-        && sudo apt update \
-        && (sudo apt -y install libpcre2-dev libdevmapper-dev libjansson-dev libmicrohttpd-dev || (sudo apt update && sudo apt -y install libpcre2-dev libdevmapper-dev libjansson-dev libmicrohttpd-dev)) \
-        && ( (which git >/dev/null 2>&1) || sudo apt -y install git) \
-        && ( (which make >/dev/null 2>&1) || sudo apt -y install binutils build-essential) \
-        && sudo apt-mark unhold linux-image-* linux-headers-* linux-modules-* linux-modules-extra-* >/dev/null 2>&1 \
-        && sudo apt -y install --reinstall "linux-image-$(uname -r)" "linux-headers-$(uname -r)" "linux-modules-$(uname -r)" "linux-modules-extra-$(uname -r)" \
-        && sudo apt-mark hold linux-image-* linux-headers-* linux-modules-* linux-modules-extra-* >/dev/null 2>&1 \
-        && ( ( ! (grep -q "dm-writecache" "/etc/modules") && echo "dm-writecache" >>"/etc/modules") || true) \
-        && ( ( ! (grep -q "rapiddisk" "/etc/modules") && echo "rapiddisk" >>"/etc/modules") || true) \
-        && ( ( ! (grep -q "rapiddisk-cache" "/etc/modules") && echo "rapiddisk-cache" >>"/etc/modules") || true) \
-        && cd "$HOME" \
-        && (rm -Rf rapiddisk || true) \
-        && git clone https://github.com/lguzzon-scratchbook/rapiddisk.git \
-        && cd rapiddisk \
-        && make \
-        && make install \
-        && cd scripts/rapiddisk-rootdev \
-        && ( (
-            [[ -n ${PRIMARY_DEV_TO_CACHE} ]] \
-                && sed -i 's,PRIMARYDEVICE,'"${DEV_TO_CACHE}"',g' "./ubuntu/rapiddisk_sub_dev.orig" \
-                && sed -i 's,rapiddisk_sub.orig,rapiddisk_sub_dev.orig,g' "./rapiddisk-on-boot" \
-                && sed -i 's,rapiddisk_sub.orig,rapiddisk_sub_dev.orig,g' "./ubuntu/rapiddisk_hook"
-        ) \
-            || true) \
-        && ./rapiddisk-on-boot --install --root="$(df | grep "/$" | sed 's/\([^ \t]\+\).*/\1/')" --size=${RAMDISK_MEMORY_RAPIDDISK} --kernel="$(uname -r)" --cache-mode=wb --force \
-        && ( (
-            [[ -n ${PRIMARY_DEV_TO_CACHE} ]] \
-                && sed -i 's,'"${DEV_TO_CACHE}"',/dev/mapper/rc-wb_'"${PRIMARY_DEV_TO_CACHE}"',' /etc/fstab
-        ) \
-            || true) \
-        && (for dmrc in /dev/mapper/rc-*; do
-            echo "Flushing ${dmrc}"
-            dmsetup message "${dmrc}" 0 flush
-            dmsetup suspend "${dmrc}"
-            dmsetup resume "${dmrc}"
-            true
-        done || true) \
-        && (
-            (nohup shutdown -r now &)
-            exit 0
-        )
+set -euo pipefail
+
+# ==============================================================================
+# Configuration
+# ==============================================================================
+
+readonly CACHE_MODE="wb"
+readonly MAX_RAMDISK_MB=2048
+readonly RAMDISK_RATIO=5
+readonly REPO_URL="https://github.com/pkoutoupis/rapiddisk.git"
+
+# Git branch selection (empty means auto-detect latest between master/develop)
+GIT_BRANCH=""
+SKIP_BRANCH_DETECTION=false
+
+readonly CONFIG_DIR="/etc/rapiddisk"
+readonly HOOKS_DIR="/usr/share/initramfs-tools/hooks"
+readonly SCRIPTS_DIR="/usr/share/initramfs-tools"
+readonly LOCAL_BOTTOM_DIR="/usr/share/initramfs-tools/scripts/local-bottom"
+
+# ==============================================================================
+# Logging & Output Helpers
+# ==============================================================================
+
+# Colors for terminal output
+readonly COLOR_RESET='\033[0m'
+readonly COLOR_RED='\033[0;31m'
+readonly COLOR_GREEN='\033[0;32m'
+readonly COLOR_YELLOW='\033[1;33m'
+readonly COLOR_BLUE='\033[0;34m'
+readonly COLOR_CYAN='\033[0;36m'
+
+# Log levels
+readonly LOG_ERROR=0
+readonly LOG_WARN=1
+readonly LOG_INFO=2
+readonly LOG_DEBUG=3
+LOG_LEVEL=$LOG_INFO
+
+# Check if we should use colors
+use_colors() {
+	[[ -t 1 ]] && [[ "${TERM:-}" != "dumb" ]]
 }
 
-rapiddisk_Install "$@"
+# Timestamp for logs
+log_timestamp() {
+	date '+%Y-%m-%d %H:%M:%S'
+}
+
+# Core logging function
+log_msg() {
+	local level=$1 color=$2 label=$3
+	shift 3
+	local msg="$*"
+	local timestamp
+	timestamp=$(log_timestamp)
+
+	if [[ $level -le $LOG_LEVEL ]]; then
+		if use_colors; then
+			printf "${color}[%s] %s:${COLOR_RESET} %s\n" "$timestamp" "$label" "$msg" >&2
+		else
+			printf "[%s] %s: %s\n" "$timestamp" "$label" "$msg" >&2
+		fi
+	fi
+}
+
+# Public logging functions
+log_error() { log_msg $LOG_ERROR "$COLOR_RED" "ERROR" "$@"; }
+log_warn() { log_msg $LOG_WARN "$COLOR_YELLOW" "WARN" "$@"; }
+log_info() { log_msg $LOG_INFO "$COLOR_GREEN" "INFO" "$@"; }
+log_debug() { log_msg $LOG_DEBUG "$COLOR_CYAN" "DEBUG" "$@"; }
+
+# Section header with progress indicator
+log_section() {
+	local current=$1 total=$2 title=$3
+	if use_colors; then
+		# shellcheck disable=SC2059
+		printf "\n${COLOR_BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${COLOR_RESET}\n" >&2
+		printf "${COLOR_BLUE}  [%d/%d] %s${COLOR_RESET}\n" "$current" "$total" "$title" >&2
+		# shellcheck disable=SC2059
+		printf "${COLOR_BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${COLOR_RESET}\n" >&2
+	else
+		printf "\n================================================================================\n" >&2
+		printf "  [%d/%d] %s\n" "$current" "$total" "$title" >&2
+		printf "================================================================================\n" >&2
+	fi
+}
+
+# Subsection header
+log_subsection() {
+	if use_colors; then
+		printf "${COLOR_CYAN}  → %s${COLOR_RESET}\n" "$*" >&2
+	else
+		printf "  → %s\n" "$*" >&2
+	fi
+}
+
+# Result status indicators
+show_ok() { printf "  ${COLOR_GREEN}[✓]${COLOR_RESET} %s\n" "$*" >&2; }
+show_warn() { printf "  ${COLOR_YELLOW}[!]${COLOR_RESET} %s\n" "$*" >&2; }
+show_fail() { printf "  ${COLOR_RED}[✗]${COLOR_RESET} %s\n" "$*" >&2; }
+show_skip() { printf "  ${COLOR_BLUE}[-]${COLOR_RESET} %s\n" "$*" >&2; }
+show_info() { printf "  ${COLOR_CYAN}[i]${COLOR_RESET} %s\n" "$*" >&2; }
+
+# Non-color versions for plain output
+show_ok_nc() { printf "  [OK] %s\n" "$*" >&2; }
+show_warn_nc() { printf "  [WARN] %s\n" "$*" >&2; }
+show_fail_nc() { printf "  [FAIL] %s\n" "$*" >&2; }
+show_skip_nc() { printf "  [SKIP] %s\n" "$*" >&2; }
+show_info_nc() { printf "  [INFO] %s\n" "$*" >&2; }
+
+# Conditional status display
+status_ok() { if use_colors; then show_ok "$@"; else show_ok_nc "$@"; fi; }
+status_warn() { if use_colors; then show_warn "$@"; else show_warn_nc "$@"; fi; }
+status_fail() { if use_colors; then show_fail "$@"; else show_fail_nc "$@"; fi; }
+status_skip() { if use_colors; then show_skip "$@"; else show_skip_nc "$@"; fi; }
+status_info() { if use_colors; then show_info "$@"; else show_info_nc "$@"; fi; }
+
+# ==============================================================================
+# Debug Helpers
+# ==============================================================================
+
+debug_var() {
+	local name=$1
+	local value
+	value=$(eval "echo \$$name" 2>/dev/null || echo "<unset>")
+	log_debug "$name='$value'"
+}
+
+debug_exec() {
+	local cmd="$*"
+	log_debug "Executing: $cmd"
+	local output
+	local exit_code=0
+	output=$($cmd 2>&1) || exit_code=$?
+	if [[ $exit_code -ne 0 ]]; then
+		log_debug "Command failed with exit code $exit_code"
+	fi
+	if [[ -n "$output" ]]; then
+		log_debug "Output: $output"
+	fi
+	return $exit_code
+}
+
+# ==============================================================================
+# Embedded Script Templates
+# ==============================================================================
+
+# shellcheck disable=SC2016
+readonly HOOK_TEMPLATE='#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+config_dir="CONFIG_DIR"
+for i in "${config_dir}"/rapiddisk_kernel_*; do
+    if [ "${config_dir}/rapiddisk_kernel_${version}" = "$i" ]; then
+        size="$(head -n 1 "$i")"
+        device="$(sed -n "2p" "$i")"
+        cache_mode="$(tail -n 1 "$i")"
+        cwd="$(dirname "$0")"
+        sed "s|%%SIZE%%|${size}|g; s|%%DEVICE%%|${device}|g; s|%%MODE%%|${cache_mode}|g" \
+            "${config_dir}/rapiddisk_sub.orig" > "${cwd}/rapiddisk_sub"
+        chmod +x "${cwd}/rapiddisk_sub"
+        manual_add_modules rapiddisk rapiddisk-cache
+        [ "$cache_mode" = "wb" ] && manual_add_modules dm-writecache
+        copy_exec /sbin/rapiddisk /sbin/rapiddisk
+        copy_file binary "${cwd}/rapiddisk_sub" /sbin/
+        rm "${cwd}/rapiddisk_sub"
+        break
+    fi
+done
+exit 0'
+
+# shellcheck disable=SC2016
+readonly BOOT_TEMPLATE='#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0 ;; esac
+. /scripts/functions
+[ -x /sbin/rapiddisk_sub ] && /sbin/rapiddisk_sub
+exit 0'
+
+# shellcheck disable=SC2016
+readonly CLEAN_TEMPLATE='#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0 ;; esac
+. /scripts/functions
+cache="$(rapiddisk -l 2>/dev/null)"
+ramdisks="$(echo "$cache" | grep -oE "rd[0-9]+" | sort -u)"
+mapped="$(echo "$cache" | grep -oE "rc-[a-z]+[0-9]*_rd[0-9]+" | grep -oE "rd[0-9]+" | sort -u)"
+for rd in $ramdisks; do
+    if ! echo "$mapped" | grep -qx "$rd"; then
+        rapiddisk -d "$rd" 2>/dev/null && \
+            log_warning_msg "rapiddisk: deleted $rd" || \
+            log_warning_msg "rapiddisk: failed to delete $rd"
+    fi
+done
+exit 0'
+
+readonly SUB_TEMPLATE='#!/bin/sh
+. /scripts/functions
+log_begin_msg "rapiddisk: starting (size: %%SIZE%% MB, device: %%DEVICE%%, mode: %%MODE%%)"
+if [ "%%MODE%%" = "wb" ]; then
+    modprobe -q dm-writecache || { log_failure_msg "rapiddisk: dm-writecache unavailable"; exit 1; }
+fi
+modprobe -q rapiddisk || { log_failure_msg "rapiddisk: module load failed"; exit 1; }
+modprobe -q rapiddisk-cache || { log_failure_msg "rapiddisk: cache module failed"; exit 1; }
+rapiddisk -a %%SIZE%% >/dev/null 2>&1 || { log_failure_msg "rapiddisk: ramdisk creation failed"; exit 1; }
+if ! rapiddisk -m rd0 -b %%DEVICE%% -p %%MODE%% >/dev/null 2>&1; then
+    log_warning_msg "rapiddisk: retrying with workaround..."
+    rapiddisk -a 5 >/dev/null 2>&1 || true
+    rapiddisk -d rd0 >/dev/null 2>&1 || true
+    rapiddisk -a %%SIZE%% >/dev/null 2>&1 || { log_failure_msg "rapiddisk: retry ramdisk failed"; exit 1; }
+    rapiddisk -m rd0 -b %%DEVICE%% -p %%MODE%% >/dev/null 2>&1 || {
+        rapiddisk -d rd0 2>/dev/null; rapiddisk -d rd1 2>/dev/null
+        log_failure_msg "rapiddisk: mapping failed"; exit 1
+    }
+fi
+log_end_msg 0
+exit 0'
+
+# ==============================================================================
+# Helper Functions
+# ==============================================================================
+
+check_root() {
+	log_debug "Checking root privileges..."
+	if [[ "$(id -u)" -ne 0 ]]; then
+		log_error "This script must be run as root (use: sudo $0)"
+		exit 1
+	fi
+	log_debug "Root check passed"
+}
+
+get_kernel_version() {
+	uname -r
+}
+
+# Detect the most recently updated branch between master and develop
+get_latest_branch() {
+	local repo_url=$1
+	local latest_branch="master"
+	local master_sha develop_sha
+
+	log_debug "Detecting latest branch from $repo_url..."
+
+	# Fetch commit SHAs for both branches using git ls-remote
+	master_sha=$(git ls-remote --heads "$repo_url" refs/heads/master 2>/dev/null | awk '{print $1}' | head -1) || master_sha=""
+	develop_sha=$(git ls-remote --heads "$repo_url" refs/heads/develop 2>/dev/null | awk '{print $1}' | head -1) || develop_sha=""
+
+	# Fallback to main if master doesn't exist
+	if [[ -z "$master_sha" ]]; then
+		log_debug "master branch not found, trying main..."
+		master_sha=$(git ls-remote --heads "$repo_url" refs/heads/main 2>/dev/null | awk '{print $1}' | head -1) || master_sha=""
+		if [[ -n "$master_sha" ]]; then
+			latest_branch="main"
+		fi
+	fi
+
+	# Handle cases where develop doesn't exist
+	if [[ -z "$develop_sha" ]]; then
+		log_debug "develop branch not found"
+		[[ -n "$master_sha" ]] && {
+			echo "$latest_branch"
+			return 0
+		}
+		echo "master"
+		return 1
+	fi
+
+	# If only develop exists
+	if [[ -z "$master_sha" && -n "$develop_sha" ]]; then
+		echo "develop"
+		return 0
+	fi
+
+	# If neither branch exists, fail early with clear message
+	if [[ -z "$master_sha" && -z "$develop_sha" ]]; then
+		log_error "Could not detect any valid branches (master/main/develop) in $repo_url"
+		log_info "Please check the repository URL or use --branch to specify explicitly"
+		return 1
+	fi
+
+	log_debug "Latest $latest_branch commit: ${master_sha:0:8}"
+	log_debug "Latest develop commit: ${develop_sha:0:8}"
+
+	# Use GitHub API to get commit dates for comparison (works for GitHub repos)
+	if [[ "$repo_url" == *"github.com"* ]]; then
+		local api_base repo_path
+		repo_path=$(echo "$repo_url" | sed 's/.*github.com[:/]//; s/\.git$//')
+		api_base="https://api.github.com/repos/${repo_path}"
+
+		local master_date develop_date
+
+		# Query commit details for master/main branch
+		local master_api_response
+		master_api_response=$(curl -sL --max-time 5 --connect-timeout 3 "${api_base}/commits/${latest_branch}" 2>/dev/null || true)
+		if [[ -n "$master_api_response" ]]; then
+			master_date=$(echo "$master_api_response" | grep '"date":' | head -1 | sed 's/.*"date": "\([^"]*\)".*/\1/')
+		fi
+		# Validate extracted date format (ISO 8601)
+		if [[ -n "$master_date" && ! "$master_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+			log_debug "Invalid date format from API for ${latest_branch}: $master_date"
+			master_date=""
+		fi
+
+		# Query commit details for develop branch
+		local develop_api_response
+		develop_api_response=$(curl -sL --max-time 5 --connect-timeout 3 "${api_base}/commits/develop" 2>/dev/null || true)
+		if [[ -n "$develop_api_response" ]]; then
+			develop_date=$(echo "$develop_api_response" | grep '"date":' | head -1 | sed 's/.*"date": "\([^"]*\)".*/\1/')
+		fi
+		# Validate extracted date format (ISO 8601)
+		if [[ -n "$develop_date" && ! "$develop_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+			log_debug "Invalid date format from API for develop: $develop_date"
+			develop_date=""
+		fi
+
+		log_debug "${latest_branch} commit date: ${master_date:-unknown}"
+		log_debug "develop commit date: ${develop_date:-unknown}"
+
+		# Check if we got any dates back from API
+		if [[ -z "$master_date" && -z "$develop_date" ]]; then
+			log_warn "Could not retrieve commit dates from GitHub API (rate limited or API error)"
+			log_debug "Falling back to default branch: $latest_branch"
+		fi
+
+		# Compare dates if both are available (ISO 8601 format comparison works lexicographically)
+		if [[ -n "$master_date" && -n "$develop_date" ]]; then
+			if [[ "$develop_date" > "$master_date" ]]; then
+				latest_branch="develop"
+			fi
+		fi
+	else
+		# For non-GitHub repos, fall back to a simple heuristic
+		# This could be enhanced for other git hosting services
+		log_debug "Non-GitHub repository - using default branch: $latest_branch"
+	fi
+
+	# Warn if auto-detection selected develop branch
+	if [[ "$latest_branch" == "develop" ]]; then
+		log_warn "Auto-detection selected 'develop' branch which may contain unstable code"
+		log_info "Use --branch master to use the stable branch, or --no-branch-detect to skip detection"
+	fi
+
+	log_info "Using latest branch: $latest_branch"
+	echo "$latest_branch"
+}
+
+calculate_ramdisk_size() {
+	local host_mem_kb ramdisk_kb size_mb
+	host_mem_kb=$(free -k | awk '/^Mem:/ {print $2}')
+	ramdisk_kb=$((host_mem_kb / RAMDISK_RATIO))
+	size_mb=$((ramdisk_kb / 1024))
+	[[ "$size_mb" -lt 64 ]] && size_mb=64
+	[[ "$size_mb" -gt "$MAX_RAMDISK_MB" ]] && size_mb=$MAX_RAMDISK_MB
+	echo "$size_mb"
+}
+
+get_root_device() {
+	findmnt -n -o SOURCE / 2>/dev/null || df / | awk 'NR==2 {print $1}'
+}
+
+validate_environment() {
+	local ramdisk_size=$1
+	local avail_mem_kb
+	avail_mem_kb=$(free -k | awk '/^Mem:/ {print $7}')
+
+	log_debug "Available memory: ${avail_mem_kb}KB"
+	log_debug "Requested RAM disk: ${ramdisk_size}MB ($((ramdisk_size * 1024))KB)"
+
+	if [[ $((ramdisk_size * 1024)) -gt "$avail_mem_kb" ]]; then
+		log_warn "Available memory (${avail_mem_kb}KB) may be insufficient for ${ramdisk_size}MB RAM disk"
+		log_info "Proceeding anyway, but monitor system performance after reboot"
+	else
+		log_debug "Memory validation passed"
+	fi
+}
+
+ensure_module() {
+	local module=$1
+	log_debug "Ensuring module '$module' is loaded..."
+	if ! grep -qx "$module" /etc/modules 2>/dev/null; then
+		log_debug "Adding $module to /etc/modules"
+		echo "$module" >>/etc/modules
+		modprobe "$module" 2>/dev/null || true
+	else
+		log_debug "Module $module already in /etc/modules"
+	fi
+}
+
+install_dependencies() {
+	log_info "Updating package lists..."
+	export DEBIAN_FRONTEND=noninteractive
+	export DEBIAN_PRIORITY=critical
+
+	# Clean up any previous interrupted apt operations
+	dpkg --configure -a 2>/dev/null || {
+		log_warn "dpkg configure had issues, attempting cleanup..."
+	}
+	rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock 2>/dev/null || true
+
+	log_debug "Running apt-get update..."
+	if ! apt-get update -qq; then
+		log_error "Failed to update package lists"
+		return 1
+	fi
+
+	log_info "Installing build dependencies..."
+	local pkgs="libpcre2-dev libdevmapper-dev libjansson-dev libmicrohttpd-dev git build-essential"
+	log_debug "Packages to install: $pkgs"
+
+	# shellcheck disable=SC2086
+	if ! apt-get -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install $pkgs; then
+		log_error "Failed to install dependencies"
+		return 1
+	fi
+
+	log_info "Installing/verifying kernel headers..."
+	local kernel
+	kernel=$(get_kernel_version)
+	apt-mark unhold linux-image-* linux-headers-* linux-modules-* 2>/dev/null || true
+
+	if ! apt-get -y -qq install --reinstall "linux-image-${kernel}" "linux-headers-${kernel}" \
+		"linux-modules-${kernel}" "linux-modules-extra-${kernel}" 2>/dev/null; then
+		log_warn "Some kernel packages may not be available, continuing..."
+	fi
+
+	apt-mark hold linux-image-* linux-headers-* linux-modules-* 2>/dev/null || true
+	log_debug "Dependencies installed successfully"
+}
+
+build_rapiddisk() {
+	local build_dir="/tmp/rapiddisk-build-$$"
+	local branch="$GIT_BRANCH"
+
+	# Auto-detect latest branch if not explicitly specified
+	if [[ -z "$branch" && "$SKIP_BRANCH_DETECTION" != true ]]; then
+		log_info "Auto-detecting latest branch..."
+		branch=$(get_latest_branch "$REPO_URL") || branch="master"
+	elif [[ -z "$branch" ]]; then
+		branch="master"
+	fi
+
+	log_info "Cloning rapiddisk repository (branch: $branch)..."
+	log_debug "Build directory: $build_dir"
+	log_debug "Target branch: $branch"
+
+	rm -rf "$build_dir"
+	mkdir -p "$build_dir"
+
+	if ! git clone --depth=1 --branch="$branch" "$REPO_URL" "$build_dir" 2>/dev/null; then
+		log_error "Failed to clone repository from $REPO_URL (branch: $branch)"
+		rm -rf "$build_dir"
+		return 1
+	fi
+	log_debug "Repository cloned successfully from $branch branch"
+
+	log_info "Building rapiddisk from source..."
+	cd "$build_dir"
+
+	make clean 2>/dev/null || true
+
+	log_debug "Running make..."
+	if ! make; then
+		log_error "Build failed - check compiler output above"
+		cd - >/dev/null
+		rm -rf "$build_dir"
+		return 1
+	fi
+	log_debug "Build completed successfully"
+
+	log_info "Installing rapiddisk binary..."
+	if ! make install; then
+		log_error "Install failed"
+		cd - >/dev/null
+		rm -rf "$build_dir"
+		return 1
+	fi
+
+	cd - >/dev/null
+	rm -rf "$build_dir"
+
+	if ! command -v rapiddisk >/dev/null 2>&1; then
+		log_error "rapiddisk binary not found in PATH after install"
+		return 1
+	fi
+
+	local version
+	version=$(rapiddisk -v 2>&1 | head -1)
+	log_info "Installed: $version"
+}
+
+backup_initramfs() {
+	local kernel=$1
+	local backup_suffix
+	backup_suffix=".backup.rapiddisk-$(date +%Y%m%d-%H%M%S)"
+	local initramfs_path="/boot/initrd.img-${kernel}"
+
+	if [[ -f "$initramfs_path" ]]; then
+		log_info "Creating initramfs backup..."
+		if cp "$initramfs_path" "${initramfs_path}${backup_suffix}"; then
+			status_ok "Backup created: ${initramfs_path}${backup_suffix}"
+		else
+			log_warn "Failed to create backup of initramfs"
+		fi
+	else
+		log_warn "Initramfs not found at $initramfs_path"
+	fi
+}
+
+install_initramfs_scripts() {
+	local kernel_version=$1 ramdisk_size=$2 root_device=$3
+
+	log_debug "Creating config directory: $CONFIG_DIR"
+	mkdir -p "$CONFIG_DIR" || {
+		log_error "Cannot create $CONFIG_DIR"
+		return 1
+	}
+
+	log_info "Installing initramfs hook script..."
+	printf '%s\n' "$HOOK_TEMPLATE" | sed "s|CONFIG_DIR|$CONFIG_DIR|g" >"${HOOKS_DIR}/rapiddisk_hook"
+	chmod +x "${HOOKS_DIR}/rapiddisk_hook"
+	status_ok "Hook script installed"
+
+	log_info "Installing boot script..."
+	printf '%s\n' "$BOOT_TEMPLATE" >"${SCRIPTS_DIR}/rapiddisk_boot"
+	chmod +x "${SCRIPTS_DIR}/rapiddisk_boot"
+	status_ok "Boot script installed"
+
+	log_info "Installing cleanup script..."
+	mkdir -p "$LOCAL_BOTTOM_DIR" || true
+	printf '%s\n' "$CLEAN_TEMPLATE" >"${LOCAL_BOTTOM_DIR}/rapiddisk_clean"
+	chmod +x "${LOCAL_BOTTOM_DIR}/rapiddisk_clean"
+	status_ok "Cleanup script installed"
+
+	log_info "Installing template script..."
+	printf '%s\n' "$SUB_TEMPLATE" >"${CONFIG_DIR}/rapiddisk_sub.orig"
+	chmod -x "${CONFIG_DIR}/rapiddisk_sub.orig"
+	status_ok "Template script installed"
+
+	log_debug "Creating kernel config file..."
+	local config_file="${CONFIG_DIR}/rapiddisk_kernel_${kernel_version}"
+	printf '%s\n%s\n%s\n' "$ramdisk_size" "$root_device" "$CACHE_MODE" >"$config_file"
+	status_ok "Kernel config: $config_file"
+
+	log_debug "Config contents: size=$ramdisk_size, device=$root_device, mode=$CACHE_MODE"
+}
+
+update_initramfs() {
+	local kernel_version=$1
+	log_info "Regenerating initramfs for kernel ${kernel_version}..."
+
+	if update-initramfs -u -k "$kernel_version"; then
+		status_ok "Initramfs updated successfully"
+	else
+		log_error "Failed to update initramfs"
+		return 1
+	fi
+}
+
+# ==============================================================================
+# Main Functions
+# ==============================================================================
+
+show_configuration() {
+	local ramdisk_size=$1 root_device=$2 kernel_version=$3
+
+	echo ""
+	if use_colors; then
+		# shellcheck disable=SC2059
+		printf "${COLOR_BLUE}┌────────────────────────────────────────────────────────────────────────────┐${COLOR_RESET}\n" >&2
+		# shellcheck disable=SC2059
+		printf "${COLOR_BLUE}│ Configuration Summary                                                      │${COLOR_RESET}\n" >&2
+		# shellcheck disable=SC2059
+		printf "${COLOR_BLUE}├────────────────────────────────────────────────────────────────────────────┤${COLOR_RESET}\n" >&2
+		printf "${COLOR_BLUE}│${COLOR_RESET}  RAM disk size: ${COLOR_GREEN}%-56s${COLOR_BLUE}│${COLOR_RESET}\n" "${ramdisk_size} MB" >&2
+		printf "${COLOR_BLUE}│${COLOR_RESET}  Root device:   ${COLOR_GREEN}%-56s${COLOR_BLUE}│${COLOR_RESET}\n" "${root_device}" >&2
+		printf "${COLOR_BLUE}│${COLOR_RESET}  Cache mode:    ${COLOR_GREEN}%-56s${COLOR_BLUE}│${COLOR_RESET}\n" "${CACHE_MODE}" >&2
+		printf "${COLOR_BLUE}│${COLOR_RESET}  Kernel:        ${COLOR_GREEN}%-56s${COLOR_BLUE}│${COLOR_RESET}\n" "${kernel_version}" >&2
+		# shellcheck disable=SC2059
+		printf "${COLOR_BLUE}└────────────────────────────────────────────────────────────────────────────┘${COLOR_RESET}\n" >&2
+	else
+		printf "================================================================================\n" >&2
+		printf "Configuration Summary\n" >&2
+		printf "================================================================================\n" >&2
+		printf "  RAM disk size: %s MB\n" "$ramdisk_size" >&2
+		printf "  Root device:   %s\n" "$root_device" >&2
+		printf "  Cache mode:    %s\n" "$CACHE_MODE" >&2
+		printf "  Kernel:        %s\n" "$kernel_version" >&2
+		printf "================================================================================\n" >&2
+	fi
+	echo ""
+}
+
+do_install() {
+	local skip_reboot=${1:-false}
+	local total_steps=7
+	local current_step=0
+
+	check_root
+
+	# Gather configuration
+	local ramdisk_size root_device kernel_version
+	ramdisk_size=$(calculate_ramdisk_size)
+	root_device=$(get_root_device)
+	kernel_version=$(get_kernel_version)
+
+	log_debug "Configuration gathered:"
+	debug_var "ramdisk_size"
+	debug_var "root_device"
+	debug_var "kernel_version"
+
+	show_configuration "$ramdisk_size" "$root_device" "$kernel_version"
+	validate_environment "$ramdisk_size"
+
+	# Step 1: Dependencies
+	((current_step++))
+	log_section "$current_step" "$total_steps" "Installing Dependencies"
+	install_dependencies || {
+		log_error "Dependency installation failed"
+		exit 1
+	}
+
+	# Step 2: Kernel modules
+	((current_step++))
+	log_section "$current_step" "$total_steps" "Configuring Kernel Modules"
+	log_info "Loading required kernel modules..."
+	ensure_module "rapiddisk"
+	ensure_module "rapiddisk-cache"
+	ensure_module "dm-writecache"
+	status_ok "Kernel modules configured"
+
+	# Step 3: Build
+	((current_step++))
+	log_section "$current_step" "$total_steps" "Building RapidDisk"
+	build_rapiddisk || {
+		log_error "Build failed"
+		exit 1
+	}
+
+	# Step 4: Backup
+	((current_step++))
+	log_section "$current_step" "$total_steps" "Backing Up Initramfs"
+	backup_initramfs "$kernel_version"
+
+	# Step 5: Install scripts
+	((current_step++))
+	log_section "$current_step" "$total_steps" "Installing Initramfs Scripts"
+	install_initramfs_scripts "$kernel_version" "$ramdisk_size" "$root_device" || {
+		log_error "Script installation failed"
+		exit 1
+	}
+
+	# Step 6: Update initramfs
+	((current_step++))
+	log_section "$current_step" "$total_steps" "Updating Initramfs"
+	update_initramfs "$kernel_version" || {
+		log_error "Initramfs update failed"
+		exit 1
+	}
+
+	# Step 7: Complete
+	((current_step++))
+	log_section "$current_step" "$total_steps" "Installation Complete"
+
+	log_info "RapidDisk has been successfully installed!"
+	echo ""
+	status_info "RAM disk size: ${ramdisk_size} MB"
+	status_info "Root device: ${root_device}"
+	status_info "Kernel: ${kernel_version}"
+	echo ""
+
+	if [[ "$skip_reboot" == true ]]; then
+		log_warn "Skipping reboot as requested (--skip-reboot)"
+		log_info "To activate the RAM disk cache, reboot manually with: sudo reboot"
+		log_info "After reboot, verify with: sudo $0 --verify"
+	else
+		log_info "System will reboot in 3 seconds to activate the RAM disk cache..."
+		log_info "After reboot, verify with: sudo $0 --verify"
+		sleep 3
+		reboot
+	fi
+}
+
+do_verify() {
+	local issues=0
+	local rd_count=0 cache_count=0
+	local total_checks=6
+
+	log_section "1" "$total_checks" "Kernel Module Status"
+	for mod in rapiddisk rapiddisk-cache dm-writecache; do
+		local mod_underscore=${mod//-/_}
+		if lsmod | grep -q "^${mod_underscore} "; then
+			status_ok "${mod} - loaded"
+		else
+			status_warn "${mod} - not loaded"
+			((issues++))
+		fi
+	done
+
+	log_section "2" "$total_checks" "Module Configuration (/etc/modules)"
+	if grep -q "rapiddisk" /etc/modules &&
+		grep -q "rapiddisk-cache" /etc/modules &&
+		grep -q "dm-writecache" /etc/modules; then
+		status_ok "All modules configured in /etc/modules"
+	else
+		status_warn "Modules not fully configured in /etc/modules"
+		((issues++))
+	fi
+
+	log_section "3" "$total_checks" "Binary Installation"
+	if command -v rapiddisk >/dev/null 2>&1; then
+		local version
+		version=$(rapiddisk -v 2>&1 | head -1)
+		status_ok "rapiddisk installed: $version"
+	else
+		status_fail "rapiddisk binary not found in PATH"
+		((issues++))
+	fi
+
+	log_section "4" "$total_checks" "RAM Disk Devices"
+	if command -v rapiddisk >/dev/null 2>&1; then
+		rd_count=$(rapiddisk -l 2>/dev/null | grep -c "rd[0-9]" || echo 0)
+		if [[ "$rd_count" -gt 0 ]]; then
+			status_ok "$rd_count RAM disk device(s) found"
+			rapiddisk -l | grep "rd[0-9]" | sed 's/^/       /' >&2
+		else
+			status_warn "No RAM disk devices found"
+			((issues++))
+		fi
+	else
+		status_skip "Binary not available - check skipped"
+	fi
+
+	log_section "5" "$total_checks" "Cache Mappings"
+	cache_count=0
+	for f in /dev/mapper/rc-*; do
+		[[ -e "$f" ]] || continue
+		((cache_count++))
+	done
+	if [[ "$cache_count" -gt 0 ]]; then
+		status_ok "$cache_count cache mapping(s) active"
+		for f in /dev/mapper/rc-*; do
+			[[ -e "$f" ]] || continue
+			printf '       %s\n' "${f##*/}" >&2
+		done
+	else
+		status_warn "No active cache mappings"
+		((issues++))
+	fi
+
+	log_section "6" "$total_checks" "Kernel Configuration"
+	local kernel_version
+	kernel_version=$(get_kernel_version)
+	local config_file="${CONFIG_DIR}/rapiddisk_kernel_${kernel_version}"
+	if [[ -f "$config_file" ]]; then
+		local size
+		size=$(head -1 "$config_file")
+		status_ok "Config exists for ${kernel_version}"
+		status_info "Configured size: ${size} MB"
+	else
+		status_warn "No config found for ${kernel_version}"
+		((issues++))
+	fi
+
+	# Summary
+	echo ""
+	if use_colors; then
+		# shellcheck disable=SC2059
+		printf "${COLOR_BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${COLOR_RESET}\n" >&2
+	else
+		printf "================================================================================\n" >&2
+	fi
+
+	if [[ "$rd_count" -gt 0 ]] && [[ "$cache_count" -gt 0 ]]; then
+		log_info "Status: FULLY CONFIGURED - RAM disk cache is active"
+		return 0
+	elif [[ "$rd_count" -gt 0 ]]; then
+		log_warn "Status: PARTIALLY CONFIGURED - RAM disk present but no cache mapping"
+		log_info "A reboot may be needed to complete the configuration"
+		return 0
+	else
+		log_error "Status: NOT CONFIGURED - Reboot required or installation failed"
+		log_info "Run: sudo $0 --skip-reboot to install without reboot, then reboot manually"
+		return 1
+	fi
+}
+
+show_help() {
+	cat <<EOF
+Usage: sudo $0 [OPTIONS]
+
+RapidDisk RAM disk cache installer for Ubuntu/Debian systems.
+
+OPTIONS:
+    (none)              Install rapiddisk and reboot automatically
+    --skip-reboot       Install without rebooting (manual reboot required)
+    --verify            Verify installation status and check configuration
+    --debug             Enable debug output for troubleshooting
+    --branch, -b NAME   Explicitly specify git branch to use (opt-in)
+    --no-branch-detect  Skip auto-detection and use default 'master' branch
+    --help, -h          Show this help message
+
+BRANCH SELECTION:
+    By default, the script auto-detects the most recently updated branch
+    between 'master' and 'develop' (or 'main' and 'develop'). Use --branch
+    to explicitly specify a branch, or --no-branch-detect to always use
+    the default 'master' branch.
+
+EXAMPLES:
+    sudo $0                       # Install with auto-detected branch
+    sudo $0 --skip-reboot         # Install without rebooting
+    sudo $0 --verify              # Check installation status
+    sudo $0 --debug               # Install with verbose debug output
+    sudo $0 --branch develop      # Use develop branch explicitly
+    sudo $0 -b master             # Use master branch explicitly
+    sudo $0 --no-branch-detect    # Always use default master branch
+
+FILES:
+    /etc/rapiddisk/             # Configuration directory
+    /boot/initrd.img-*          # Initramfs images (backups created)
+
+For more information, see: https://github.com/pkoutoupis/rapiddisk
+
+EOF
+}
+
+# ==============================================================================
+# Entry Point
+# ==============================================================================
+
+main() {
+	local skip_reboot=false
+	local do_verify_only=false
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--debug)
+			LOG_LEVEL=$LOG_DEBUG
+			log_warn "Debug mode enabled - command traces may contain sensitive information"
+			set -x # Also enable shell trace
+			shift
+			;;
+		--skip-reboot)
+			skip_reboot=true
+			log_debug "Skip reboot enabled"
+			shift
+			;;
+		--verify)
+			do_verify_only=true
+			log_debug "Verify mode enabled"
+			shift
+			;;
+		--branch | -b)
+			if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+				GIT_BRANCH="$2"
+				log_debug "Explicit branch specified: $GIT_BRANCH"
+				shift 2
+			else
+				log_error "Option --branch requires an argument"
+				exit 1
+			fi
+			;;
+		--no-branch-detect)
+			SKIP_BRANCH_DETECTION=true
+			log_debug "Branch auto-detection disabled"
+			shift
+			;;
+		--help | -h)
+			show_help
+			exit 0
+			;;
+		*)
+			log_error "Unknown option: $1"
+			show_help
+			exit 1
+			;;
+		esac
+	done
+
+	# Execute requested action
+	if [[ "$do_verify_only" == true ]]; then
+		do_verify
+	else
+		do_install "$skip_reboot"
+	fi
+}
+
+main "$@"

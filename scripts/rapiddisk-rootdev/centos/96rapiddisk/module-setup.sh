@@ -1,22 +1,24 @@
 #!/bin/bash
 
 # called by dracut
+# shellcheck disable=SC2154
+# moddir and kernel are provided by dracut
 check() {
 
-	for i in $moddir/*
-		do
-			if [ "${moddir}/${kernel}" = "$i" ] ; then
-				size="$(head -n 1 "$i")"
-				device="$(head -n 2 "$i" | tail -n 1)"
-				cache_mode="$(tail -n 1 "$i")"
-				cp -f "$moddir/run_rapiddisk.sh.orig" "$moddir/run_rapiddisk.sh"
-				sed -i 's,RAMDISKSIZE,'"$size"',g' "$moddir/run_rapiddisk.sh"
-				sed -i 's,BOOTDEVICE,'"$device"',g' "$moddir/run_rapiddisk.sh"
-				sed -i 's,CACHEMODE,'"$cache_mode"',g' "$moddir/run_rapiddisk.sh"
-				chmod +x "$moddir/run_rapiddisk.sh"
-				return 0
-			fi
-		done
+	# shellcheck disable=SC2231
+	for i in "$moddir"/*; do
+		if [ "${moddir}/${kernel}" = "$i" ]; then
+			size="$(head -n 1 "$i")"
+			device="$(head -n 2 "$i" | tail -n 1)"
+			cache_mode="$(tail -n 1 "$i")"
+			cp -f "$moddir/run_rapiddisk.sh.orig" "$moddir/run_rapiddisk.sh"
+			sed -i 's,RAMDISKSIZE,'"$size"',g' "$moddir/run_rapiddisk.sh"
+			sed -i 's,BOOTDEVICE,'"$device"',g' "$moddir/run_rapiddisk.sh"
+			sed -i 's,CACHEMODE,'"$cache_mode"',g' "$moddir/run_rapiddisk.sh"
+			chmod +x "$moddir/run_rapiddisk.sh"
+			return 0
+		fi
+	done
 	return 255
 
 }
