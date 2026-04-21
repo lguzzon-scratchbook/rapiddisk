@@ -10,6 +10,16 @@
 
 set -euo pipefail
 
+# Auto-escalate if not root but sudoer
+if [[ "$(id -u)" -ne 0 ]]; then
+    if sudo -v 2>/dev/null; then
+        exec sudo "$0" "$@"
+    else
+        echo "Error: This script must be run as root (use: sudo $0)" >&2
+        exit 1
+    fi
+fi
+
 # ==============================================================================
 # Configuration
 # ==============================================================================
