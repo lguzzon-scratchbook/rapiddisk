@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Copyright © 2021 - 2025 Petros Koutoupis
 # All rights reserved.
 #
