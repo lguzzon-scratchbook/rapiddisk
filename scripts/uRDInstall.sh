@@ -31,8 +31,9 @@ SKIP_BRANCH_DETECTION=false
 
 readonly CONFIG_DIR="/etc/rapiddisk"
 readonly HOOKS_DIR="/usr/share/initramfs-tools/hooks"
-readonly SCRIPTS_DIR="/usr/share/initramfs-tools"
+readonly SCRIPTS_DIR="/usr/share/initramfs-tools/scripts/local-bottom"
 readonly LOCAL_BOTTOM_DIR="/usr/share/initramfs-tools/scripts/local-bottom"
+readonly DEBUG_LOG="/var/log/rapiddisk-install.log"
 
 # ==============================================================================
 # Logging & Output Helpers
@@ -164,76 +165,262 @@ debug_exec() {
 
 # shellcheck disable=SC2016
 readonly HOOK_TEMPLATE='#!/bin/sh
+# Debug: rapiddisk initramfs hook script
+# This runs during initramfs creation
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case $1 in prereqs) prereqs; exit 0 ;; esac
+
+DEBUG_LOG="/var/log/rapiddisk-hook.log"
+mkdir -p /var/log/rapiddisk 2>/dev/null || true
+
+log_hook() {
+    echo "$(date +%H:%M:%S) [HOOK] $1" | tee -a "$DEBUG_LOG" 2>/dev/null || true
+}
+
 . /usr/share/initramfs-tools/hook-functions
+
 config_dir="CONFIG_DIR"
-for i in "${config_dir}"/rapiddisk_kernel_*; do
-    if [ "${config_dir}/rapiddisk_kernel_${version}" = "$i" ]; then
-        size="$(head -n 1 "$i")"
-        device="$(sed -n "2p" "$i")"
-        cache_mode="$(tail -n 1 "$i")"
-        cwd="$(dirname "$0")"
-        sed "s|%%SIZE%%|${size}|g; s|%%DEVICE%%|${device}|g; s|%%MODE%%|${cache_mode}|g" \
-            "${config_dir}/rapiddisk_sub.orig" > "${cwd}/rapiddisk_sub"
-        chmod +x "${cwd}/rapiddisk_sub"
-        manual_add_modules rapiddisk rapiddisk-cache
-        [ "$cache_mode" = "wb" ] && manual_add_modules dm-writecache
-        copy_exec /sbin/rapiddisk /sbin/rapiddisk
-        copy_file binary "${cwd}/rapiddisk_sub" /sbin/
-        rm "${cwd}/rapiddisk_sub"
-        break
-    fi
-done
+config_file="${config_dir}/rapiddisk_kernel_${version}"
+
+log_hook "Starting hook for kernel: $version"
+log_hook "Config file: $config_file"
+
+if [ ! -f "$config_file" ]; then
+    log_hook "ERROR: Config file not found: $config_file"
+    exit 0
+fi
+
+log_hook "Reading config from $config_file"
+size="$(head -n 1 "$config_file")" || { log_hook "ERROR: Failed to read size"; exit 0; }
+device="$(sed -n "2p" "$config_file")" || { log_hook "ERROR: Failed to read device"; exit 0; }
+cache_mode="$(tail -n 1 "$config_file")" || { log_hook "ERROR: Failed to read cache_mode"; exit 0; }
+
+log_hook "Config: size=$size device=$device mode=$cache_mode"
+
+cwd="$(dirname "$0")"
+log_hook "Creating boot script in $cwd"
+
+sed "s|%%SIZE%%|${size}|g; s|%%DEVICE%%|${device}|g; s|%%MODE%%|${cache_mode}|g" \
+    "${config_dir}/rapiddisk_sub.orig" > "${cwd}/rapiddisk_sub" || { log_hook "ERROR: sed failed"; exit 0; }
+
+chmod +x "${cwd}/rapiddisk_sub" || { log_hook "ERROR: chmod failed"; exit 0; }
+
+log_hook "Adding modules: rapiddisk rapiddisk-cache"
+manual_add_modules rapiddisk rapiddisk-cache || log_hook "WARNING: manual_add_modules rapiddisk failed"
+[ "$cache_mode" = "wb" ] && { log_hook "Adding dm-writecache for wb mode"; manual_add_modules dm-writecache || log_hook "WARNING: manual_add_modules dm-writecache failed"; }
+
+log_hook "Copying rapiddisk binary"
+copy_exec /sbin/rapiddisk /sbin/rapiddisk || log_hook "WARNING: copy_exec rapiddisk failed"
+
+log_hook "Copying boot script"
+copy_file binary "${cwd}/rapiddisk_sub" /sbin/ || { log_hook "ERROR: copy_file failed"; exit 0; }
+
+rm -f "${cwd}/rapiddisk_sub" || log_hook "WARNING: cleanup failed"
+
+log_hook "Hook completed successfully"
 exit 0'
 
 # shellcheck disable=SC2016
 readonly BOOT_TEMPLATE='#!/bin/sh
+# Debug: rapiddisk boot script
+# This runs during early boot (local-bottom)
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case $1 in prereqs) prereqs; exit 0 ;; esac
+
+DEBUG_LOG="/var/log/rapiddisk-boot.log"
+mkdir -p /var/log/rapiddisk 2>/dev/null || true
+
+log_boot() {
+    echo "$(date +%H:%M:%S) [BOOT] $1" | tee -a "$DEBUG_LOG" 2>/dev/null || true
+    log_warning_msg "[rapiddisk] $1"
+}
+
 . /scripts/functions
-[ -x /sbin/rapiddisk_sub ] && /sbin/rapiddisk_sub
+
+log_boot "Starting boot script"
+
+if [ -x /sbin/rapiddisk_sub ]; then
+    log_boot "Executing /sbin/rapiddisk_sub"
+    _tmpfile="/tmp/rapiddisk_boot_output_$$"
+    if /sbin/rapiddisk_sub >"$_tmpfile" 2>&1; then
+        RESULT=0
+    else
+        RESULT=$?
+    fi
+    while read -r line || [ -n "$line" ]; do
+        log_boot "$line"
+    done < "$_tmpfile"
+    rm -f "$_tmpfile"
+    if [ $RESULT -eq 0 ]; then
+        log_boot "rapiddisk_sub completed successfully"
+    else
+        log_boot "ERROR: rapiddisk_sub failed with code $RESULT"
+    fi
+else
+    log_boot "ERROR: /sbin/rapiddisk_sub not found or not executable"
+    log_boot "Run: ls -la /sbin/rapiddisk* 2>&1"
+    ls -la /sbin/rapiddisk* 2>&1 | while read line; do log_boot "$line"; done
+fi
+
+log_boot "Boot script finished"
 exit 0'
 
-# shellcheck disable=SC2016
 readonly CLEAN_TEMPLATE='#!/bin/sh
+# Debug: rapiddisk cleanup script
+# This runs during late boot (local-bottom) to clean up unmapped ramdisks
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case $1 in prereqs) prereqs; exit 0 ;; esac
+
+DEBUG_LOG="/var/log/rapiddisk-clean.log"
+mkdir -p /var/log/rapiddisk 2>/dev/null || true
+
+log_clean() {
+    echo "$(date +%H:%M:%S) [CLEAN] $1" | tee -a "$DEBUG_LOG" 2>/dev/null || true
+    log_warning_msg "[rapiddisk-clean] $1"
+}
+
 . /scripts/functions
-cache="$(rapiddisk -l 2>/dev/null)"
-ramdisks="$(echo "$cache" | grep -oE "rd[0-9]+" | sort -u)"
-mapped="$(echo "$cache" | grep -oE "rc-[a-z]+[0-9]*_rd[0-9]+" | grep -oE "rd[0-9]+" | sort -u)"
+
+log_clean "Starting cleanup"
+
+if ! command -v rapiddisk >/dev/null 2>&1; then
+    log_clean "ERROR: rapiddisk command not found"
+    exit 0
+fi
+
+log_clean "Querying rapiddisk devices..."
+cache="$(rapiddisk -l 2>&1)" || { log_clean "ERROR: rapiddisk -l failed: $cache"; exit 0; }
+log_clean "Output: $cache"
+
+ramdisks="$(echo "$cache" | grep -oE "rd[0-9]+" | sort -u)" || true
+mapped="$(echo "$cache" | grep -oE "rc-[a-z]+[0-9]*_rd[0-9]+" | grep -oE "rd[0-9]+" | sort -u)" || true
+
+log_clean "Found ramdisks: $ramdisks"
+log_clean "Found mapped: $mapped"
+
 for rd in $ramdisks; do
     if ! echo "$mapped" | grep -qx "$rd"; then
-        rapiddisk -d "$rd" 2>/dev/null && \
-            log_warning_msg "rapiddisk: deleted $rd" || \
-            log_warning_msg "rapiddisk: failed to delete $rd"
+        log_clean "Deleting unmapped ramdisk: $rd"
+        rapiddisk -d "$rd" 2>&1 | while read line; do log_clean "  $line"; done
+    else
+        log_clean "Keeping mapped ramdisk: $rd"
     fi
 done
+
+log_clean "Cleanup completed"
 exit 0'
 
 readonly SUB_TEMPLATE='#!/bin/sh
+# Debug: rapiddisk startup script
+# This creates the ramdisk and cache mapping
+DEBUG_LOG="/var/log/rapiddisk-sub.log"
+mkdir -p /var/log/rapiddisk 2>/dev/null || true
+
+log_sub() {
+    echo "$(date +%H:%M:%S) [SUB] $1" | tee -a "$DEBUG_LOG" 2>/dev/null || true
+}
+
 . /scripts/functions
-log_begin_msg "rapiddisk: starting (size: %%SIZE%% MB, device: %%DEVICE%%, mode: %%MODE%%)"
+
+log_sub "========================================="
+log_sub "rapiddisk: Starting (size: %%SIZE%% MB, device: %%DEVICE%%, mode: %%MODE%%)"
+log_sub "========================================="
+
+# Step 1: Load dm-writecache if writeback mode
 if [ "%%MODE%%" = "wb" ]; then
-    modprobe -q dm-writecache || { log_failure_msg "rapiddisk: dm-writecache unavailable"; exit 1; }
+    log_sub "Step 1: Loading dm-writecache module..."
+    if ! modprobe -q dm-writecache 2>&1; then
+        log_sub "ERROR: dm-writecache module load failed"
+        log_failure_msg "rapiddisk: dm-writecache unavailable"
+        exit 1
+    fi
+    log_sub "SUCCESS: dm-writecache loaded"
 fi
-modprobe -q rapiddisk || { log_failure_msg "rapiddisk: module load failed"; exit 1; }
-modprobe -q rapiddisk-cache || { log_failure_msg "rapiddisk: cache module failed"; exit 1; }
-rapiddisk -a %%SIZE%% >/dev/null 2>&1 || { log_failure_msg "rapiddisk: ramdisk creation failed"; exit 1; }
-if ! rapiddisk -m rd0 -b %%DEVICE%% -p %%MODE%% >/dev/null 2>&1; then
-    log_warning_msg "rapiddisk: retrying with workaround..."
-    rapiddisk -a 5 >/dev/null 2>&1 || true
-    rapiddisk -d rd0 >/dev/null 2>&1 || true
-    rapiddisk -a %%SIZE%% >/dev/null 2>&1 || { log_failure_msg "rapiddisk: retry ramdisk failed"; exit 1; }
-    rapiddisk -m rd0 -b %%DEVICE%% -p %%MODE%% >/dev/null 2>&1 || {
-        rapiddisk -d rd0 2>/dev/null; rapiddisk -d rd1 2>/dev/null
-        log_failure_msg "rapiddisk: mapping failed"; exit 1
+
+# Step 2: Load rapiddisk module
+log_sub "Step 2: Loading rapiddisk module..."
+if ! modprobe -q rapiddisk 2>&1; then
+    log_sub "ERROR: rapiddisk module load failed"
+    log_failure_msg "rapiddisk: module load failed"
+    exit 1
+fi
+log_sub "SUCCESS: rapiddisk loaded"
+
+# Step 3: Load rapiddisk-cache module
+log_sub "Step 3: Loading rapiddisk-cache module..."
+if ! modprobe -q rapiddisk-cache 2>&1; then
+    log_sub "ERROR: rapiddisk-cache module load failed"
+    log_failure_msg "rapiddisk: cache module failed"
+    exit 1
+fi
+log_sub "SUCCESS: rapiddisk-cache loaded"
+
+# Step 4: Verify /sys/kernel/rapiddisk/mgmt exists
+log_sub "Step 4: Verifying rapiddisk sysfs..."
+if [ ! -w /sys/kernel/rapiddisk/mgmt ]; then
+    log_sub "ERROR: /sys/kernel/rapiddisk/mgmt not available or not writable"
+    log_failure_msg "rapiddisk: sysfs not available"
+    exit 1
+fi
+log_sub "SUCCESS: sysfs available"
+
+# Step 5: Create ramdisk
+log_sub "Step 5: Creating ramdisk (%%SIZE%% MB)..."
+attach_output="$(rapiddisk -a %%SIZE%% 2>&1)" || {
+    log_sub "ERROR: rapiddisk attach failed: $attach_output"
+    log_failure_msg "rapiddisk: ramdisk creation failed"
+    exit 1
+}
+log_sub "SUCCESS: $attach_output"
+
+# Step 6: Map to block device
+log_sub "Step 6: Mapping rd0 to %%DEVICE%% (mode: %%MODE%%)..."
+map_output="$(rapiddisk -m rd0 -b %%DEVICE%% -p %%MODE%% 2>&1)" || {
+    log_sub "WARNING: First mapping attempt failed: $map_output"
+    log_sub "Step 6b: Retry with workaround..."
+
+    log_sub "  Creating small temp ramdisk..."
+    rapiddisk -a 5 2>&1 || true
+
+    log_sub "  Deleting rd0..."
+    rapiddisk -d rd0 2>&1 || true
+
+    log_sub "  Recreating %%SIZE%% MB ramdisk..."
+    attach_output2="$(rapiddisk -a %%SIZE%% 2>&1)" || {
+        log_sub "ERROR: Retry ramdisk creation failed: $attach_output2"
+        log_failure_msg "rapiddisk: retry ramdisk failed"
+        exit 1
     }
+
+    log_sub "  Retrying mapping..."
+    map_output="$(rapiddisk -m rd0 -b %%DEVICE%% -p %%MODE%% 2>&1)" || {
+        log_sub "ERROR: Mapping retry failed: $map_output"
+        rapiddisk -d rd0 2>/dev/null || true
+        rapiddisk -d rd1 2>/dev/null || true
+        log_failure_msg "rapiddisk: mapping failed"
+        exit 1
+    }
+}
+
+log_sub "SUCCESS: $map_output"
+
+# Step 7: Verify mapping exists
+log_sub "Step 7: Verifying cache mapping..."
+if [ -e /dev/mapper/rc-wt_%%DEVICE%% ] || [ -e /dev/mapper/rc-wb_%%DEVICE%% ] || [ -e /dev/mapper/rc-wa_%%DEVICE%% ]; then
+    log_sub "SUCCESS: Cache device created"
+    ls -la /dev/mapper/rc-* 2>&1 | while read line; do log_sub "  $line"; done
+else
+    log_sub "WARNING: No cache device found in /dev/mapper"
+    ls -la /dev/mapper/ 2>&1 | while read line; do log_sub "  $line"; done
 fi
+
+log_sub "========================================="
+log_sub "rapiddisk: Startup completed successfully"
+log_sub "========================================="
+
 log_end_msg 0
 exit 0'
 
@@ -401,9 +588,10 @@ ensure_module() {
 	if ! grep -qx "$module" /etc/modules 2>/dev/null; then
 		log_debug "Adding $module to /etc/modules"
 		echo "$module" >>/etc/modules
-		modprobe "$module" 2>/dev/null || true
-	else
-		log_debug "Module $module already in /etc/modules"
+	fi
+	if ! lsmod | grep -q "^${module//-/_} "; then
+		log_debug "Loading module '$module'..."
+		modprobe "$module" 2>/dev/null || log_warn "Could not load module '$module' (may need rebuild)"
 	fi
 }
 
@@ -704,7 +892,7 @@ do_install() {
 do_verify() {
 	local issues=0
 	local rd_count=0 cache_count=0
-	local total_checks=6
+	local total_checks=7
 
 	log_section "1" "$total_checks" "Kernel Module Status"
 	for mod in rapiddisk rapiddisk-cache dm-writecache; do
@@ -739,10 +927,10 @@ do_verify() {
 
 	log_section "4" "$total_checks" "RAM Disk Devices"
 	if command -v rapiddisk >/dev/null 2>&1; then
-		rd_count=$(rapiddisk -l 2>/dev/null | grep -c "rd[0-9]" || echo 0)
+		rd_count=$(rapiddisk -l 2>/dev/null | grep -cE "rd[0-9]+" || echo 0)
 		if [[ "$rd_count" -gt 0 ]]; then
 			status_ok "$rd_count RAM disk device(s) found"
-			rapiddisk -l | grep "rd[0-9]" | sed 's/^/       /' >&2
+			rapiddisk -l | grep -E "rd[0-9]+" | sed 's/^/       /' >&2
 		else
 			status_warn "No RAM disk devices found"
 			((issues++)) || true
@@ -753,10 +941,12 @@ do_verify() {
 
 	log_section "5" "$total_checks" "Cache Mappings"
 	cache_count=0
+	shopt -s nullglob
 	for f in /dev/mapper/rc-*; do
 		[[ -e "$f" ]] || continue
 		((cache_count++)) || true
 	done
+	shopt -u nullglob
 	if [[ "$cache_count" -gt 0 ]]; then
 		status_ok "$cache_count cache mapping(s) active"
 		for f in /dev/mapper/rc-*; do
@@ -780,6 +970,29 @@ do_verify() {
 	else
 		status_warn "No config found for ${kernel_version}"
 		((issues++)) || true
+	fi
+
+	log_section "7" "7" "Debug Logs"
+	local debug_logs=0
+	local has_errors=0
+	shopt -s nullglob
+	for log in /var/log/rapiddisk*.log; do
+		((debug_logs++)) || true
+		if grep -qE "ERROR|FAILED|failed" "$log" 2>/dev/null; then
+			((has_errors++)) || true
+			status_warn "Errors found in: ${log##*/}"
+		else
+			status_ok "${log##*/} - OK"
+		fi
+	done
+	shopt -u nullglob
+	if [[ $debug_logs -eq 0 ]]; then
+		status_warn "No debug logs found (scripts may not have run)"
+	elif [[ $has_errors -gt 0 ]]; then
+		status_info "View errors with: sudo cat /var/log/rapiddisk*.log"
+		((issues++)) || true
+	else
+		status_info "All debug logs clean"
 	fi
 
 	# Summary
@@ -815,6 +1028,7 @@ OPTIONS:
     (none)              Install rapiddisk and reboot automatically
     --skip-reboot       Install without rebooting (manual reboot required)
     --verify            Verify installation status and check configuration
+    --logs              View debug logs from last boot
     --debug             Enable debug output for troubleshooting
     --branch, -b NAME   Explicitly specify git branch to use (opt-in)
     --no-branch-detect  Skip auto-detection and use default 'master' branch
@@ -869,6 +1083,20 @@ main() {
 		--verify)
 			do_verify_only=true
 			log_debug "Verify mode enabled"
+			shift
+			;;
+		--logs)
+			log_info "=== Debug Logs ==="
+			shopt -s nullglob
+			for log in /var/log/rapiddisk*.log; do
+				echo ""
+				echo "=== $log ==="
+				cat "$log"
+			done
+			shopt -u nullglob
+			if [[ $# -le 1 ]]; then
+				exit 0
+			fi
 			shift
 			;;
 		--branch | -b)
