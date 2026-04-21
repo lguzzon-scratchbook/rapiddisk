@@ -15,6 +15,10 @@ readonly MAX_RAMDISK_MB=2048
 readonly RAMDISK_RATIO=5
 readonly REPO_URL="https://github.com/pkoutoupis/rapiddisk.git"
 
+# Git branch selection (empty means auto-detect latest between master/develop)
+GIT_BRANCH=""
+SKIP_BRANCH_DETECTION=false
+
 readonly CONFIG_DIR="/etc/rapiddisk"
 readonly HOOKS_DIR="/usr/share/initramfs-tools/hooks"
 readonly SCRIPTS_DIR="/usr/share/initramfs-tools"
@@ -240,6 +244,117 @@ get_kernel_version() {
 	uname -r
 }
 
+# Detect the most recently updated branch between master and develop
+get_latest_branch() {
+	local repo_url=$1
+	local latest_branch="master"
+	local master_sha develop_sha
+
+	log_debug "Detecting latest branch from $repo_url..."
+
+	# Fetch commit SHAs for both branches using git ls-remote
+	master_sha=$(git ls-remote --heads "$repo_url" refs/heads/master 2>/dev/null | awk '{print $1}' | head -1) || master_sha=""
+	develop_sha=$(git ls-remote --heads "$repo_url" refs/heads/develop 2>/dev/null | awk '{print $1}' | head -1) || develop_sha=""
+
+	# Fallback to main if master doesn't exist
+	if [[ -z "$master_sha" ]]; then
+		log_debug "master branch not found, trying main..."
+		master_sha=$(git ls-remote --heads "$repo_url" refs/heads/main 2>/dev/null | awk '{print $1}' | head -1) || master_sha=""
+		if [[ -n "$master_sha" ]]; then
+			latest_branch="main"
+		fi
+	fi
+
+	# Handle cases where develop doesn't exist
+	if [[ -z "$develop_sha" ]]; then
+		log_debug "develop branch not found"
+		[[ -n "$master_sha" ]] && {
+			echo "$latest_branch"
+			return 0
+		}
+		echo "master"
+		return 1
+	fi
+
+	# If only develop exists
+	if [[ -z "$master_sha" && -n "$develop_sha" ]]; then
+		echo "develop"
+		return 0
+	fi
+
+	# If neither branch exists, fail early with clear message
+	if [[ -z "$master_sha" && -z "$develop_sha" ]]; then
+		log_error "Could not detect any valid branches (master/main/develop) in $repo_url"
+		log_info "Please check the repository URL or use --branch to specify explicitly"
+		return 1
+	fi
+
+	log_debug "Latest $latest_branch commit: ${master_sha:0:8}"
+	log_debug "Latest develop commit: ${develop_sha:0:8}"
+
+	# Use GitHub API to get commit dates for comparison (works for GitHub repos)
+	if [[ "$repo_url" == *"github.com"* ]]; then
+		local api_base repo_path
+		repo_path=$(echo "$repo_url" | sed 's/.*github.com[:/]//; s/\.git$//')
+		api_base="https://api.github.com/repos/${repo_path}"
+
+		local master_date develop_date
+
+		# Query commit details for master/main branch
+		local master_api_response
+		master_api_response=$(curl -sL --max-time 5 --connect-timeout 3 "${api_base}/commits/${latest_branch}" 2>/dev/null || true)
+		if [[ -n "$master_api_response" ]]; then
+			master_date=$(echo "$master_api_response" | grep '"date":' | head -1 | sed 's/.*"date": "\([^"]*\)".*/\1/')
+		fi
+		# Validate extracted date format (ISO 8601)
+		if [[ -n "$master_date" && ! "$master_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+			log_debug "Invalid date format from API for ${latest_branch}: $master_date"
+			master_date=""
+		fi
+
+		# Query commit details for develop branch
+		local develop_api_response
+		develop_api_response=$(curl -sL --max-time 5 --connect-timeout 3 "${api_base}/commits/develop" 2>/dev/null || true)
+		if [[ -n "$develop_api_response" ]]; then
+			develop_date=$(echo "$develop_api_response" | grep '"date":' | head -1 | sed 's/.*"date": "\([^"]*\)".*/\1/')
+		fi
+		# Validate extracted date format (ISO 8601)
+		if [[ -n "$develop_date" && ! "$develop_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+			log_debug "Invalid date format from API for develop: $develop_date"
+			develop_date=""
+		fi
+
+		log_debug "${latest_branch} commit date: ${master_date:-unknown}"
+		log_debug "develop commit date: ${develop_date:-unknown}"
+
+		# Check if we got any dates back from API
+		if [[ -z "$master_date" && -z "$develop_date" ]]; then
+			log_warn "Could not retrieve commit dates from GitHub API (rate limited or API error)"
+			log_debug "Falling back to default branch: $latest_branch"
+		fi
+
+		# Compare dates if both are available (ISO 8601 format comparison works lexicographically)
+		if [[ -n "$master_date" && -n "$develop_date" ]]; then
+			if [[ "$develop_date" > "$master_date" ]]; then
+				latest_branch="develop"
+			fi
+		fi
+	else
+		# For non-GitHub repos, fall back to a simple heuristic
+		# This could be enhanced for other git hosting services
+		log_debug "Non-GitHub repository - using default branch: $latest_branch"
+	fi
+
+	# Warn if auto-detection selected develop branch
+	if [[ "$latest_branch" == "develop" ]]; then
+		log_warn "Auto-detection selected 'develop' branch which may contain unstable code"
+		log_info "Use --branch master to use the stable branch, or --no-branch-detect to skip detection"
+	fi
+
+	log_info "Using latest branch: $latest_branch"
+	echo "$latest_branch"
+}
+
 calculate_ramdisk_size() {
 	local host_mem_kb ramdisk_kb size_mb
 	host_mem_kb=$(free -k | awk '/^Mem:/ {print $2}')
@@ -325,19 +440,29 @@ install_dependencies() {
 
 build_rapiddisk() {
 	local build_dir="/tmp/rapiddisk-build-$$"
+	local branch="$GIT_BRANCH"
 
-	log_info "Cloning rapiddisk repository..."
+	# Auto-detect latest branch if not explicitly specified
+	if [[ -z "$branch" && "$SKIP_BRANCH_DETECTION" != true ]]; then
+		log_info "Auto-detecting latest branch..."
+		branch=$(get_latest_branch "$REPO_URL") || branch="master"
+	elif [[ -z "$branch" ]]; then
+		branch="master"
+	fi
+
+	log_info "Cloning rapiddisk repository (branch: $branch)..."
 	log_debug "Build directory: $build_dir"
+	log_debug "Target branch: $branch"
 
 	rm -rf "$build_dir"
 	mkdir -p "$build_dir"
 
-	if ! git clone --depth=1 "$REPO_URL" "$build_dir" 2>/dev/null; then
-		log_error "Failed to clone repository from $REPO_URL"
+	if ! git clone --depth=1 --branch="$branch" "$REPO_URL" "$build_dir" 2>/dev/null; then
+		log_error "Failed to clone repository from $REPO_URL (branch: $branch)"
 		rm -rf "$build_dir"
 		return 1
 	fi
-	log_debug "Repository cloned successfully"
+	log_debug "Repository cloned successfully from $branch branch"
 
 	log_info "Building rapiddisk from source..."
 	cd "$build_dir"
@@ -677,21 +802,32 @@ Usage: sudo $0 [OPTIONS]
 RapidDisk RAM disk cache installer for Ubuntu/Debian systems.
 
 OPTIONS:
-    (none)        Install rapiddisk and reboot automatically
-    --skip-reboot Install without rebooting (manual reboot required)
-    --verify      Verify installation status and check configuration
-    --debug       Enable debug output for troubleshooting
-    --help, -h    Show this help message
+    (none)              Install rapiddisk and reboot automatically
+    --skip-reboot       Install without rebooting (manual reboot required)
+    --verify            Verify installation status and check configuration
+    --debug             Enable debug output for troubleshooting
+    --branch, -b NAME   Explicitly specify git branch to use (opt-in)
+    --no-branch-detect  Skip auto-detection and use default 'master' branch
+    --help, -h          Show this help message
+
+BRANCH SELECTION:
+    By default, the script auto-detects the most recently updated branch
+    between 'master' and 'develop' (or 'main' and 'develop'). Use --branch
+    to explicitly specify a branch, or --no-branch-detect to always use
+    the default 'master' branch.
 
 EXAMPLES:
-    sudo $0                  # Install and reboot
-    sudo $0 --skip-reboot    # Install without rebooting
-    sudo $0 --verify         # Check installation status
-    sudo $0 --debug          # Install with verbose debug output
+    sudo $0                       # Install with auto-detected branch
+    sudo $0 --skip-reboot         # Install without rebooting
+    sudo $0 --verify              # Check installation status
+    sudo $0 --debug               # Install with verbose debug output
+    sudo $0 --branch develop      # Use develop branch explicitly
+    sudo $0 -b master             # Use master branch explicitly
+    sudo $0 --no-branch-detect    # Always use default master branch
 
 FILES:
-    /etc/rapiddisk/          # Configuration directory
-    /boot/initrd.img-*       # Initramfs images (backups created)
+    /etc/rapiddisk/             # Configuration directory
+    /boot/initrd.img-*          # Initramfs images (backups created)
 
 For more information, see: https://github.com/pkoutoupis/rapiddisk
 
@@ -707,27 +843,45 @@ main() {
 	local do_verify_only=false
 
 	# Parse arguments
-	for arg in "$@"; do
-		case "$arg" in
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
 		--debug)
 			LOG_LEVEL=$LOG_DEBUG
 			log_warn "Debug mode enabled - command traces may contain sensitive information"
 			set -x # Also enable shell trace
+			shift
 			;;
 		--skip-reboot)
 			skip_reboot=true
 			log_debug "Skip reboot enabled"
+			shift
 			;;
 		--verify)
 			do_verify_only=true
 			log_debug "Verify mode enabled"
+			shift
+			;;
+		--branch | -b)
+			if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
+				GIT_BRANCH="$2"
+				log_debug "Explicit branch specified: $GIT_BRANCH"
+				shift 2
+			else
+				log_error "Option --branch requires an argument"
+				exit 1
+			fi
+			;;
+		--no-branch-detect)
+			SKIP_BRANCH_DETECTION=true
+			log_debug "Branch auto-detection disabled"
+			shift
 			;;
 		--help | -h)
 			show_help
 			exit 0
 			;;
 		*)
-			log_error "Unknown option: $arg"
+			log_error "Unknown option: $1"
 			show_help
 			exit 1
 			;;
