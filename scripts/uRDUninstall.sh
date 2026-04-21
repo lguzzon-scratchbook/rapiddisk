@@ -238,7 +238,7 @@ step_flush_cache() {
 		# Flush the cache
 		if ! dmsetup message "$dmrc" 0 flush 2>/dev/null; then
 			log_error "Failed to flush $name - cache data may be at risk"
-			((failed++))
+			((failed++)) || true
 			continue
 		fi
 		log_debug "Flushed $name"
@@ -254,20 +254,20 @@ step_flush_cache() {
 		# Check if device is still in use before attempting removal
 		if dmsetup info "$dmrc" 2>/dev/null | grep -q "open.*[1-9]"; then
 			log_warn "Device $name is still in use (mounted or open), skipping removal"
-			((failed++))
+			((failed++)) || true
 			continue
 		fi
 
 		# Remove the device mapper device
 		if dmsetup remove "$dmrc" 2>/dev/null; then
 			log_debug "Removed device mapper device: $name"
-			((removed++))
+			((removed++)) || true
 		else
 			log_warn "Failed to remove device mapper device: $name"
-			((failed++))
+			((failed++)) || true
 		fi
 
-		((flushed++))
+		((flushed++)) || true
 	done
 
 	if [[ $flushed -gt 0 ]] && [[ $failed -eq 0 ]]; then

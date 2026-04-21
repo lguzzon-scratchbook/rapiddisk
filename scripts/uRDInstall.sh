@@ -713,7 +713,7 @@ do_verify() {
 			status_ok "${mod} - loaded"
 		else
 			status_warn "${mod} - not loaded"
-			((issues++))
+			((issues++)) || true
 		fi
 	done
 
@@ -724,7 +724,7 @@ do_verify() {
 		status_ok "All modules configured in /etc/modules"
 	else
 		status_warn "Modules not fully configured in /etc/modules"
-		((issues++))
+		((issues++)) || true
 	fi
 
 	log_section "3" "$total_checks" "Binary Installation"
@@ -734,7 +734,7 @@ do_verify() {
 		status_ok "rapiddisk installed: $version"
 	else
 		status_fail "rapiddisk binary not found in PATH"
-		((issues++))
+		((issues++)) || true
 	fi
 
 	log_section "4" "$total_checks" "RAM Disk Devices"
@@ -745,7 +745,7 @@ do_verify() {
 			rapiddisk -l | grep "rd[0-9]" | sed 's/^/       /' >&2
 		else
 			status_warn "No RAM disk devices found"
-			((issues++))
+			((issues++)) || true
 		fi
 	else
 		status_skip "Binary not available - check skipped"
@@ -765,7 +765,7 @@ do_verify() {
 		done
 	else
 		status_warn "No active cache mappings"
-		((issues++))
+		((issues++)) || true
 	fi
 
 	log_section "6" "$total_checks" "Kernel Configuration"
@@ -779,7 +779,7 @@ do_verify() {
 		status_info "Configured size: ${size} MB"
 	else
 		status_warn "No config found for ${kernel_version}"
-		((issues++))
+		((issues++)) || true
 	fi
 
 	# Summary
