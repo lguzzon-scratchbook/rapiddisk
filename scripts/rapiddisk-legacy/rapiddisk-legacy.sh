@@ -1,13 +1,11 @@
 #!/bin/bash
-  
-if [ ! "$BASH_VERSION" ] ; then
-        exec /bin/bash "$0" "$@"
+
+if [ ! "$BASH_VERSION" ]; then
+	exec /bin/bash "$0" "$@"
 fi
 
-
 ## usage ##
-function help_menu()
-{
+function help_menu() {
 	echo -e "$1 9.2.0"
 	echo -e "Copyright 2011 - 2025 Petros Koutoupis"
 	echo -e ""
@@ -51,17 +49,18 @@ function help_menu()
 #
 #
 
-[ $# -lt "1" ] && help_menu $0
+[ $# -lt "1" ] && help_menu "$0"
 
+# shellcheck disable=SC2206,SC2086
 arr=($@)
 case "${arr[0]}" in
 --attach)
-	[ $# -lt "2" ] && help_menu $0
-	rapiddisk -a ${arr[1]}
+	[ $# -lt "2" ] && help_menu "$0"
+	rapiddisk -a "${arr[1]}"
 	;;
 --detach)
-	[ $# -lt "2" ] && help_menu $0
-	rapiddisk -d ${arr[1]}
+	[ $# -lt "2" ] && help_menu "$0"
+	rapiddisk -d "${arr[1]}"
 	;;
 --list)
 	rapiddisk -l
@@ -70,33 +69,34 @@ case "${arr[0]}" in
 	rapiddisk -l -j
 	;;
 --flush)
-	[ $# -lt "2" ] && help_menu $0
-	rapiddisk -f ${arr[1]}
+	[ $# -lt "2" ] && help_menu "$0"
+	rapiddisk -f "${arr[1]}"
 	;;
 --resize)
-	[ $# -lt "3" ] && help_menu $0
-	rapiddisk -r ${arr[1]} -c ${arr[2]}
+	[ $# -lt "3" ] && help_menu "$0"
+	rapiddisk -r "${arr[1]}" -c "${arr[2]}"
 	;;
 --cache-map)
 	MODE="wt"
-	[ $# -lt "3" ] && help_menu $0
+	[ $# -lt "3" ] && help_menu "$0"
 	[ $# -eq "4" ] && MODE="${arr[3]}"
-	rapiddisk -m ${arr[1]} -b ${arr[2]} -p ${MODE}
+	rapiddisk -m "${arr[1]}" -b "${arr[2]}" -p "${MODE}"
 	;;
 --cache-unmap)
-	[ $# -lt "2" ] && help_menu $0
-	rapiddisk -u ${arr[1]}
+	[ $# -lt "2" ] && help_menu "$0"
+	rapiddisk -u "${arr[1]}"
 	;;
 --stat-cache)
-	[ $# -lt "2" ] && help_menu $0
-	rapiddisk -s ${arr[1]}
+	[ $# -lt "2" ] && help_menu "$0"
+	rapiddisk -s "${arr[1]}"
 	;;
 --help)
-	help_menu $0
+	help_menu "$0"
 	;;
 *)
 	echo -ne "Option ${arr[0]} does not exist.\n\n"
 	exit 1
+	;;
 esac
 
 exit $?
