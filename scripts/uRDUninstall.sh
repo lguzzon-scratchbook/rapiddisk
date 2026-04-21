@@ -289,7 +289,7 @@ step_remove_modules() {
 		if grep -q "^${module}$" /etc/modules 2>/dev/null; then
 			sed -i "/^${module}$/d" /etc/modules
 			log_debug "Removed $module from /etc/modules"
-			((modules_removed++))
+			((modules_removed++)) || true
 		fi
 		# Also try to unload the module if it's loaded
 		local mod_underscore=${module//-/_}
@@ -317,7 +317,7 @@ step_remove_binary() {
 		if [[ -f "$binary_path" ]]; then
 			rm -f "$binary_path"
 			log_debug "Removed: $binary_path"
-			((binary_removed++))
+			((binary_removed++)) || true
 		fi
 	done
 
@@ -326,7 +326,7 @@ step_remove_binary() {
 		if [[ -f "$daemon_path" ]]; then
 			rm -f "$daemon_path"
 			log_debug "Removed: $daemon_path"
-			((binary_removed++))
+			((binary_removed++)) || true
 		fi
 	done
 
@@ -364,12 +364,12 @@ do_uninstall() {
 	fi
 
 	# Step 1: Fix dpkg state
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Fixing Package Manager State"
 	step_fix_dpkg
 
 	# Step 2: Ensure git is available
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Checking Prerequisites"
 	step_ensure_git || {
 		log_error "Prerequisites check failed"
@@ -377,12 +377,12 @@ do_uninstall() {
 	}
 
 	# Step 3: Cleanup previous attempts
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Cleaning Up Previous Attempts"
 	step_cleanup_previous
 
 	# Step 4: Clone repository
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Cloning Repository"
 	step_clone_repo || {
 		log_error "Repository cloning failed"
@@ -390,7 +390,7 @@ do_uninstall() {
 	}
 
 	# Step 5: Uninstall rapiddisk from initramfs
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Removing from Initramfs"
 	step_uninstall_rapiddisk || {
 		log_error "Uninstallation failed"
@@ -398,32 +398,32 @@ do_uninstall() {
 	}
 
 	# Step 6: Remove kernel modules from /etc/modules
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Removing Kernel Module Configuration"
 	step_remove_modules
 
 	# Step 7: Remove rapiddisk binaries
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Removing RapidDisk Binaries"
 	step_remove_binary
 
 	# Step 8: Cleanup repo
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Cleaning Up Repository"
 	step_cleanup_repo
 
 	# Step 9: Restore fstab
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Restoring /etc/fstab"
 	step_restore_fstab "$primary_dev"
 
 	# Step 10: Flush cache
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Flushing Cache"
 	step_flush_cache
 
 	# Step 11: Reboot
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Scheduling Reboot"
 
 	echo ""

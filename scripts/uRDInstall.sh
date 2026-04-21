@@ -633,7 +633,7 @@ do_install() {
 	validate_environment "$ramdisk_size"
 
 	# Step 1: Dependencies
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Installing Dependencies"
 	install_dependencies || {
 		log_error "Dependency installation failed"
@@ -641,7 +641,7 @@ do_install() {
 	}
 
 	# Step 2: Kernel modules
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Configuring Kernel Modules"
 	log_info "Loading required kernel modules..."
 	ensure_module "rapiddisk"
@@ -650,7 +650,7 @@ do_install() {
 	status_ok "Kernel modules configured"
 
 	# Step 3: Build
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Building RapidDisk"
 	build_rapiddisk || {
 		log_error "Build failed"
@@ -658,12 +658,12 @@ do_install() {
 	}
 
 	# Step 4: Backup
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Backing Up Initramfs"
 	backup_initramfs "$kernel_version"
 
 	# Step 5: Install scripts
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Installing Initramfs Scripts"
 	install_initramfs_scripts "$kernel_version" "$ramdisk_size" "$root_device" || {
 		log_error "Script installation failed"
@@ -671,7 +671,7 @@ do_install() {
 	}
 
 	# Step 6: Update initramfs
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Updating Initramfs"
 	update_initramfs "$kernel_version" || {
 		log_error "Initramfs update failed"
@@ -679,7 +679,7 @@ do_install() {
 	}
 
 	# Step 7: Complete
-	((current_step++))
+	((current_step++)) || true
 	log_section "$current_step" "$total_steps" "Installation Complete"
 
 	log_info "RapidDisk has been successfully installed!"
@@ -755,7 +755,7 @@ do_verify() {
 	cache_count=0
 	for f in /dev/mapper/rc-*; do
 		[[ -e "$f" ]] || continue
-		((cache_count++))
+		((cache_count++)) || true
 	done
 	if [[ "$cache_count" -gt 0 ]]; then
 		status_ok "$cache_count cache mapping(s) active"
