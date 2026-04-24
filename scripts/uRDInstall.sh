@@ -23,7 +23,7 @@ fi
 readonly CACHE_MODE="wb"
 readonly MAX_RAMDISK_MB=2048
 readonly RAMDISK_RATIO=5
-readonly REPO_URL="https://github.com/pkoutoupis/rapiddisk.git"
+readonly REPO_URL="https://github.com/lguzzon-scratchbook/rapiddisk"
 
 # Git branch selection (empty means auto-detect latest between master/develop)
 GIT_BRANCH=""
