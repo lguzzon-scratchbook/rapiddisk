@@ -135,8 +135,22 @@ get_cache_mode() {
 
 check_rapiddisk_built() {
     if command -v rapiddisk &>/dev/null; then
-        log INF "rapiddisk command found"
-        return 0
+        # Verify system-wide binary exists (required for initramfs hook)
+        local system_binary=false
+        for binary_path in /usr/sbin/rapiddisk /usr/local/sbin/rapiddisk /sbin/rapiddisk /usr/bin/rapiddisk; do
+            if [[ -x "$binary_path" ]]; then
+                system_binary=true
+                break
+            fi
+        done
+
+        if [[ "$system_binary" == "true" ]]; then
+            log INF "rapiddisk command found in system location"
+            return 0
+        else
+            log WRN "rapiddisk command found via PATH but not in system directory"
+            log WRN "System installation needed for initramfs hook"
+        fi
     fi
 
     local project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -144,8 +158,9 @@ check_rapiddisk_built() {
 
     if [[ -x "$rapiddisk_bin" ]]; then
         export PATH="$project_root/src:$PATH"
-        log INF "Using local rapiddisk binary"
-        return 0
+        log INF "Local rapiddisk binary found, but system installation required for boot"
+        log INF "Will trigger rebuild/install to ensure system-wide availability"
+        return 1  # Return 1 to trigger build/install
     fi
 
     return 1
@@ -222,8 +237,31 @@ build_rapiddisk() {
         fi
     done
 
-    # Add to PATH if built successfully
-    export PATH="$project_root/src:$PATH"
+    # Verify binary installed to system location (needed for initramfs hook)
+    local binary_found=false
+    for binary_path in /usr/sbin/rapiddisk /usr/local/sbin/rapiddisk /sbin/rapiddisk; do
+        if [[ -x "$binary_path" ]]; then
+            binary_found=true
+            log INF "rapiddisk binary installed to: $binary_path"
+            break
+        fi
+    done
+
+    if [[ "$binary_found" == "false" ]]; then
+        log ERR "rapiddisk binary not found in system directory after 'make install'."
+        log ERR "The initramfs hook requires rapiddisk in /sbin or /usr/sbin."
+        log ERR "Check Makefile installation paths and try again."
+    fi
+
+    # Re-check if rapiddisk command is now available system-wide
+    if ! command -v rapiddisk &>/dev/null; then
+        # Update PATH to include common locations
+        export PATH="/usr/sbin:/usr/local/sbin:/sbin:$PATH"
+        if ! command -v rapiddisk &>/dev/null; then
+            log ERR "rapiddisk command still not available after install. Check installation."
+        fi
+    fi
+
     cd - >/dev/null || true
     log INF "rapiddisk built successfully"
 }
@@ -235,7 +273,7 @@ check_prerequisites() {
     command -v rapiddisk &>/dev/null || log ERR "rapiddisk command not available after build"
 
     [[ -x "$RAPIDDISK_BOOT" ]] || log ERR "rapiddisk-on-boot not found at: $RAPIDDISK_BOOT"
-    [[ -f /etc/os-release ]] || log ERR "Cannot detect OS. /etc/os-release not found"
+    [[ -f /etc/os-release ]] || log ERR "Rapiddisk-on-boot requires /etc/os-release for OS detection"
 
     local os_id=$(grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"')
     case "$os_id" in
@@ -243,6 +281,13 @@ check_prerequisites() {
         *) log WRN "OS '$os_id' may not be fully supported. Continuing..." ;;
     esac
     log INF "Prerequisites check passed"
+}
+
+check_uninstall_prerequisites() {
+    log INF "Checking uninstall prerequisites..."
+
+    [[ -x "$RAPIDDISK_BOOT" ]] || log ERR "rapiddisk-on-boot not found at: $RAPIDDISK_BOOT"
+    log INF "Uninstall prerequisites check passed"
 }
 
 show_disk_info() {
@@ -306,7 +351,7 @@ EOF
 
     log INF "Running rapiddisk-on-boot installation..."
     local args=(--install --root="$root_device" --size="$cache_size" --cache-mode="$cache_mode" --kernel="$kernel_version")
-    [[ -n "$force_flag" ]] && args+=(--force)
+    [[ "${FORCE:-false}" == "true" ]] && args+=(--force)
     "$RAPIDDISK_BOOT" "${args[@]}"
 
     cat << EOF
@@ -327,7 +372,7 @@ uninstall_rapiddisk() {
     local kernel_version=$(uname -r)
     log INF "Uninstalling rapiddisk for kernel $kernel_version..."
     local args=(--uninstall --kernel="$kernel_version")
-    [[ -n "$force_flag" ]] && args+=(--force)
+    [[ "${FORCE:-false}" == "true" ]] && args+=(--force)
     "$RAPIDDISK_BOOT" "${args[@]}"
     log INF "Uninstall completed. A reboot is recommended."
 }
@@ -335,7 +380,7 @@ uninstall_rapiddisk() {
 global_uninstall() {
     log INF "Global uninstall of rapiddisk-on-boot..."
     local args=(--global-uninstall)
-    [[ -n "$force_flag" ]] && args+=(--force)
+    [[ "${FORCE:-false}" == "true" ]] && args+=(--force)
     "$RAPIDDISK_BOOT" "${args[@]}"
     log INF "Global uninstall completed. A reboot is recommended."
 }
@@ -533,12 +578,11 @@ EOF
 
 main() {
     local action="install"
-    local force_flag=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help) show_help; exit 0 ;;
-            -f|--force) force_flag="--force" ;;
+            -f|--force) FORCE=true ;;
             -u|--uninstall) action="uninstall" ;;
             -g|--global-uninstall) action="global-uninstall" ;;
             -v|--verify) action="verify" ;;
@@ -548,15 +592,17 @@ main() {
         shift
     done
 
-    [[ -n "$force_flag" ]] && export force_flag
+    export FORCE
 
     case "$action" in
-        install) check_root; check_prerequisites; install_rapiddisk ;;
-        uninstall) check_root; check_prerequisites; uninstall_rapiddisk ;;
-        global-uninstall) check_root; check_prerequisites; global_uninstall ;;
+        install)  check_prerequisites; install_rapiddisk ;;
+        uninstall)  check_uninstall_prerequisites; uninstall_rapiddisk ;;
+        global-uninstall)  check_uninstall_prerequisites; global_uninstall ;;
         verify) verify_rapiddisk ;;
         check-alignment) show_alignment_info ;;
     esac
 }
+
+check_root "$@"
 
 main "$@"
