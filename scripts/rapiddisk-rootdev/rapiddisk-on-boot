@@ -3,7 +3,7 @@
 VERSION='0.1.5'
 echo "rapiddisk-on-boot version $VERSION"
 
-ihelp()  {
+ihelp() {
 
 	echo "Usage:"
 	echo "$(basename "$0") --help"
@@ -56,7 +56,7 @@ myerror() {
 
 }
 
-centos_install () {
+centos_install() {
 
 	echo " - Creating module's dir..."
 	mkdir -p "${module_destination}/${module_name}"
@@ -73,7 +73,7 @@ centos_install () {
 
 }
 
-centos_end () {
+centos_end() {
 
 	echo " - Running 'dracut --kver $kernel_version -f'"
 	dracut --kver "$kernel_version" -f
@@ -81,30 +81,30 @@ centos_end () {
 
 }
 
-ubuntu_install () {
+ubuntu_install() {
 
-	if [ ! -x "${hook_dest}" -o -n "${force}" ] ; then
+	if [ ! -x "${hook_dest}" ] || [ -n "${force}" ]; then
 		echo " - Copying ${source_dir}/ubuntu/rapiddisk_hook to ${hook_dest}..."
-		if ! cp -f "${source_dir}/ubuntu/rapiddisk_hook" "${hook_dest}" ; then
+		if ! cp -f "${source_dir}/ubuntu/rapiddisk_hook" "${hook_dest}"; then
 			myerror "could not copy rapiddisk_hook to ${hook_dest}."
 		fi
 		chmod +x "${hook_dest}" 2>/dev/null
 	fi
-	if [ ! -x "${bootscript_dest}" -o -n "${force}" ] ; then
+	if [ ! -x "${bootscript_dest}" ] || [ -n "${force}" ]; then
 		echo " - Copying ${source_dir}/ubuntu/rapiddisk_boot to ${bootscript_dest}..."
-		if ! cp -f "${source_dir}/ubuntu/rapiddisk_boot" "${bootscript_dest}" ; then
+		if ! cp -f "${source_dir}/ubuntu/rapiddisk_boot" "${bootscript_dest}"; then
 			myerror "could not copy rapiddisk_boot to ${bootscript_dest}."
 		fi
 		chmod +x "${bootscript_dest}" 2>/dev/null
 	fi
-	if [ ! -f "${subscript_dest_orig}" -o -n "${force}" ] ; then
+	if [ ! -f "${subscript_dest_orig}" ] || [ -n "${force}" ]; then
 		echo " - Copying ${source_dir}/ubuntu/rapiddisk_sub.orig to ${subscript_dest_orig}..."
 		if ! cp -f "${source_dir}/ubuntu/rapiddisk_sub.orig" "${subscript_dest_orig}"; then
 			myerror "could not copy rapiddisk_sub.orig to ${subscript_dest_orig}."
 		fi
 		chmod -x "${subscript_dest_orig}" 2>/dev/null
 	fi
-	if [ ! -x "${cleanscript_dest_orig}" -o -n "${force}" ] ; then
+	if [ ! -x "${cleanscript_dest_orig}" ] || [ -n "${force}" ]; then
 		echo " - Copying ${source_dir}/ubuntu/rapiddisk_clean to ${cleanscript_dest_orig}..."
 		if ! cp -f "${source_dir}/ubuntu/rapiddisk_clean" "${cleanscript_dest_orig}"; then
 			myerror "could not copy rapiddisk_clean to ${cleanscript_dest_orig}."
@@ -118,15 +118,15 @@ ubuntu_install () {
 
 }
 
-ubuntu_end () {
+ubuntu_end() {
 
 	# this is needed when an --uninstall is peformed by the apt prerm kernel script
 	# we need to skip the kernel version test (skipped using the --skip-kernel-check)
 	# and to skip the initramfs creation
-	if [ "$install_mode" = "simple_uninstall" -a -n "$skipkernelcheck" ] ; then
+	if [ "$install_mode" = "simple_uninstall" ] && [ -n "$skipkernelcheck" ]; then
 		noinitramfs=1
 	fi
-	if [ -z "$noinitramfs" ] ; then
+	if [ -z "$noinitramfs" ]; then
 		echo " - Updating initramfs for kernel version ${kernel_version}..."
 		echo ""
 		update-initramfs -u -k "$kernel_version"
@@ -136,44 +136,44 @@ ubuntu_end () {
 
 }
 
-install_options_checks () {
+install_options_checks() {
 
 	[ -n "$ramdisk_size" ] || myerror "missing argument '--size'."
 	is_num "$ramdisk_size" || myerror "the ramdisk size must be a positive integer."
 	[ -n "$cache_mode" ] || myerror "missing argument '--cache-mode'."
 	cache_mode="$(echo "$cache_mode" | tr '[:upper:]' '[:lower:]')"
-	if [[ ! "$cache_mode" = w[tab] ]] ; then
+	if ! echo "$cache_mode" | grep -q '^wt$\|^wa$\|^wb$'; then
 		myerror "cache mode in '--cache-mode parameter' must be one of 'wt', 'wa' or 'wb'."
 	fi
-	if [ -z "$root_device" ] ; then
+	if [ -z "$root_device" ]; then
 		echo " - No root device was specified, we start looking for it in /etc/fstab..."
 		root_line="$(grep -vE '^[ #]+' /etc/fstab | grep -m 1 -oP '^.*?[^\s]+\s+/\s+')"
 		root_first_char="$(echo "$root_line" | grep -o '^.')"
 		case $root_first_char in
 			U)
-				uuid="$(echo "$root_line" | grep -oP '[\w\d]{8}-([\w\d]{4}-){3}[\w\d]{12}')"
-				root_device=/dev/"$(ls 2>/dev/null -l /dev/disk/by-uuid/*"$uuid"* | grep -oE '[^/]+$')"
+				uuid="$(echo "$root_line" | grep -oP '[a-fA-F0-9]{8}-([a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}')"
+				root_device=$(readlink -f "/dev/disk/by-uuid/$uuid" 2>/dev/null)
 				;;
 			L)
 				label="$(echo "$root_line" | grep -oP '=[^\s]+' | tr -d '=')"
-				root_device=/dev/"$(ls 2>/dev/null -l /dev/disk/by-label/*"$label"* | grep -oE '[^/]+$')"
+				root_device=$(readlink -f "/dev/disk/by-label/$label" 2>/dev/null)
 				;;
 			/)
 				device="$(echo "$root_line" | grep -oP '^[^\s]+')"
-				root_device=/dev/"$(ls 2>/dev/null -l "$device" | grep -oP '[^/]+$')"
+				root_device=$(readlink -f "$device" 2>/dev/null)
 				;;
 			*)
 				myerror "could not find the root device from /etc/fstab. Use the '--root' option."
 				;;
 		esac
 		# TODO this check must be improved
-		if ! echo "$root_device" | grep -P '^/dev/\w{1,4}\d{0,99}$' >/dev/null 2>/dev/null ; then
+		if ! echo "$root_device" | grep -E '^/dev/[a-zA-Z]+[0-9]*(p[0-9]+)?$' >/dev/null 2>/dev/null; then
 			myerror "root_device '$root_device' must be in the form '/dev/xxx' or '/dev/xxxn with n as a positive integer. Use the '--root' option."
 		fi
 		echo " - Root device '$root_device' was found!"
 		echo ' - Is it ok to use it? [yN]'
 		read -r yn
-		if [ ! "$yn" = "y" ] && [ ! "$yn" = "Y" ] ; then
+		if [ ! "$yn" = "y" ] && [ ! "$yn" = "Y" ]; then
 			myerror "please use the '--root' option."
 		fi
 	fi
@@ -184,21 +184,21 @@ install_options_checks () {
 whoami | grep '^root$' 2>/dev/null 1>/dev/null || myerror "sorry, this must be run as root."
 # checks for rapiddisk executables
 rapiddisk_command="$(which 2>/dev/null rapiddisk | head -n 1)"
-if [ -z "$rapiddisk_command" ] ; then
+if [ -z "$rapiddisk_command" ]; then
 	myerror "'rapiddisk' command not found."
 fi
 # looks for the OS name
-if cat /etc/*-release 2>/dev/null | grep "CentOS" >/dev/null 2>/dev/null; then
+if cat /etc/*-release 2>/dev/null | grep -E "CentOS|Red Hat|fedora|Rocky|Alma" >/dev/null 2>/dev/null; then
 	os_name="centos"
-	kernel_installed="$(rpm -qa kernel-*| sed -E 's/^kernel-[^[:digit:]]+//'|sort -u)"
-elif cat /etc/*-release  2>/dev/null | grep "Ubuntu" >/dev/null 2>/dev/null; then
+	kernel_installed="$(rpm -qa kernel-* | sed -E 's/^kernel-[^[:digit:]]+//' | sort -u)"
+elif cat /etc/*-release 2>/dev/null | grep -E "Ubuntu|Debian|linuxmint" >/dev/null 2>/dev/null; then
 	os_name="ubuntu"
-	kernel_installed="$(dpkg-query --list | grep -P 'linux-image-(unsigned-)?\d' |grep '^.i'| awk '{ print $2 }'| sed -re 's,linux-image-(unsigned-)?,,')"
+	kernel_installed="$(dpkg-query --list | grep -P 'linux-image-(unsigned-)?\d' | grep '^.i' | awk '{ print $2 }' | sed -re 's,linux-image-(unsigned-)?,,')"
 else
 	myerror "operating system not supported."
 fi
 # set the data dir
-if [ -d /usr/share/rapiddisk-on-boot ] ; then
+if [ -d /usr/share/rapiddisk-on-boot ]; then
 	source_dir="/usr/share/rapiddisk-on-boot"
 else
 	source_dir="$(dirname "$0")"
@@ -215,7 +215,7 @@ for i in "$@"; do
 			shift # past argument with no value
 			;;
 		--global-uninstall)
-			if [ -n "$install_mode" ] ; then
+			if [ -n "$install_mode" ]; then
 				ihelp
 				myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
 			fi
@@ -223,7 +223,7 @@ for i in "$@"; do
 			shift # past argument with no value
 			;;
 		--install)
-			if [ -n "$install_mode" ] ; then
+			if [ -n "$install_mode" ]; then
 				ihelp
 				myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
 			fi
@@ -241,7 +241,7 @@ for i in "$@"; do
 		--cache-mode=*)
 			cache_mode="${i#*=}"
 			shift # past argument=value
-            ;;
+			;;
 		--force)
 			force=1
 			shift # past argument with no value
@@ -270,45 +270,44 @@ for i in "$@"; do
 done # Credits https://stackoverflow.com/questions/192249/how-do-i-parse-command-line-arguments-in-bash
 
 # the action must always be specified
-if [ -z "$install_mode" ] ; then
+if [ -z "$install_mode" ]; then
 	ihelp
 	myerror "one betweeen '--install, '--uninstall' and '--global-uninstall' must be specified."
 fi
 # --kernel option is mandatory, except when --global-uninstall is specified
-if [ -z "$kernel_version" ] && [ ! "$install_mode" = "global_uninstall" ] ; then
+if [ -z "$kernel_version" ] && [ ! "$install_mode" = "global_uninstall" ]; then
 	ihelp
 	myerror "missing argument '--kernel'."
 fi
 # check if the kernel version specified is installed
-if [ ! "$install_mode" = "global_uninstall" ] ; then
-	for v in $kernel_installed
-	do
-		if [ "$v" = "$kernel_version" ] ; then
+if [ ! "$install_mode" = "global_uninstall" ]; then
+	for v in $kernel_installed; do
+		if [ "$v" = "$kernel_version" ]; then
 			kernel_found=1
 			break
 		fi
 	done
-	if [ -z "$kernel_found" -a -z "$skipkernelcheck" ] ; then
+	if [ -z "$kernel_found" ] && [ -z "$skipkernelcheck" ]; then
 		myerror "the kernel version you specified is not installed on the machine."
 	fi
 fi
 # start installation
-if [ "$os_name" = "centos" ] ; then
+if [ "$os_name" = "centos" ]; then
 	echo " - CentOS detected!"
 	# prepare some vars
 	module_destination="/usr/lib/dracut/modules.d"
 	module_name="96rapiddisk"
 	kernel_version_file="$kernel_version"
 	# what should we do?
-	if [ "$install_mode" = "simple_install" ] ; then
+	if [ "$install_mode" = "simple_install" ]; then
 		# installing on CentOS
 		# now we can perform some parameters' checks which would be senseless to do earlier
 		install_options_checks
-		if [ -z "$force" ] ; then
+		if [ -z "$force" ]; then
 			# without --force, we have do some more checks
-			if [ -d "${module_destination}/${module_name}" ] ; then
+			if [ -d "${module_destination}/${module_name}" ]; then
 				# module installed, check for kernel activation file
-				if [ -f "${module_destination}/${module_name}/${kernel_version_file}" ] ; then
+				if [ -f "${module_destination}/${module_name}/${kernel_version_file}" ]; then
 					# everything is already installed
 					myerror "module already installed and already active for kernel version $kernel_version. Use '--force' to reinstall."
 				fi
@@ -316,68 +315,71 @@ if [ "$os_name" = "centos" ] ; then
 		fi
 		centos_install
 		centos_end
-	elif [ "$install_mode" = "simple_uninstall" ] ; then
+	elif [ "$install_mode" = "simple_uninstall" ]; then
 		echo " - Uninstalling for kernel ${kernel_version}..."
-		if [ -z "$force" ] ; then
-			if [ ! -f "${module_destination}/${module_name}/${kernel_version_file}" ] ; then
-				 myerror "module not active for kernel version ${kernel_version}. Use '--force' to remove it anyway."
+		if [ -z "$force" ]; then
+			if [ ! -f "${module_destination}/${module_name}/${kernel_version_file}" ]; then
+				myerror "module not active for kernel version ${kernel_version}. Use '--force' to remove it anyway."
 			fi
 		fi
 		echo " - Removing rapiddisk from ${kernel_version} initrd file..."
 		rm -f "${module_destination}/${module_name}/${kernel_version_file}"
 		centos_end
-	elif [ "$install_mode" = "global_uninstall" ] ; then
+	elif [ "$install_mode" = "global_uninstall" ]; then
 		echo " - Global uninstalling and rebuilding initrd for all kernels..."
 		rm -rf "${module_destination:?}/${module_name:?}"
 		echo " - Rebuilding all the initrd files.."
-		for k in $kernel_installed
-		do
+		for k in $kernel_installed; do
 			echo " - dracut --kver $k -f"
 			dracut --kver "$k" -f
 		done
 	fi
-elif [ "$os_name" = "ubuntu" ] ; then
+elif [ "$os_name" = "ubuntu" ]; then
 	echo " - Ubuntu detected!"
 	# prepare some vars
 	hooks_dir="/usr/share/initramfs-tools/hooks"
-	scripts_dir="/usr/share/initramfs-tools"
+	scripts_dir="/usr/share/initramfs-tools/scripts/init-premount"
 	alt_scripts_dir="/usr/share/initramfs-tools/scripts/local-bottom"
 	config_dir="/etc/rapiddisk"
-	if [ ! -d "$hooks_dir" -o ! -d "$scripts_dir" -o ! -d "$alt_scripts_dir" ] ; then
+	if [ ! -d "$hooks_dir" ] || [ ! -d "$scripts_dir" ] || [ ! -d "$alt_scripts_dir" ]; then
 		myerror "I can't find any suitable place to write initramfs' scripts."
 	fi
-	if [ ! -d "$config_dir" ] ; then
+	if [ ! -d "$config_dir" ]; then
 		mkdir -p "$config_dir"
 	fi
 	hook_dest="${hooks_dir}/rapiddisk_hook"
-	bootscript_dest="${scripts_dir}/rapiddisk_boot"
+	bootscript_dest="${scripts_dir}/rapiddisk"
 	subscript_dest_orig="${config_dir}/rapiddisk_sub.orig"
 	cleanscript_dest_orig="${alt_scripts_dir}/rapiddisk_clean"
 	kernel_version_file="rapiddisk_kernel_${kernel_version}"
 	kernel_version_file_dest="${config_dir}/${kernel_version_file}"
 	# what should we do?
-	if [ "$install_mode" = "simple_install" ] ; then
+	if [ "$install_mode" = "simple_install" ]; then
 		# installing on Ubuntu
 		# check if rapiddisk modules are installed for chosen kernel
 		# TODO: move this check to install_options_checks function if is ok under CentOS too
 		# checks for modinfo executable
 		modinfo_command="$(which 2>/dev/null modinfo | head -n 1)"
-		if [ -z "$modinfo_command" ] ; then
+		if [ -z "$modinfo_command" ]; then
 			myerror "'modinfo' command not found."
 		fi
-		if ! $modinfo_command >/dev/null 2>&1 -k "$kernel_version" -n rapiddisk ; then
-			if dkms status -m rapiddisk -k "$kernel_version" | grep -q 'added$' ; then
-				rapiddisk_version="$(dkms status -m rapiddisk -k "$kernel_version" | grep -oP ',\s+[^:\s]+'|sed 's/, //')"
-				if dkms 2>/dev/null install -m rapiddisk -v "$rapiddisk_version" -k "$kernel_version" ; then
-					missing_modules=0
+		if ! $modinfo_command >/dev/null 2>&1 -k "$kernel_version" -n rapiddisk; then
+			# Check if dkms command exists before using it
+			dkms_command="$(which 2>/dev/null dkms | head -n 1)"
+			if [ -n "$dkms_command" ]; then
+				if $dkms_command status -m rapiddisk -k "$kernel_version" | grep -q 'added$'; then
+					rapiddisk_version="$($dkms_command status -m rapiddisk -k "$kernel_version" | grep -oP ',\s+[^:\s]+' | sed 's/, //')"
+					if $dkms_command 2>/dev/null install -m rapiddisk -v "$rapiddisk_version" -k "$kernel_version"; then
+						missing_modules=0
+					fi
 				fi
 			fi
-			if [ -z "$missing_modules" ] ; then
-				myerror "no rapiddisk modules found for chosen kernel."
+			if [ -z "$missing_modules" ]; then
+				myerror "no rapiddisk modules found for chosen kernel. Install the rapiddisk kernel module for kernel $kernel_version or install dkms."
 			fi
 		fi
-		if [ -z "$force" ] ; then
-			if [ -f "${kernel_version_file_dest}" ] ; then
+		if [ -z "$force" ]; then
+			if [ -f "${kernel_version_file_dest}" ]; then
 				myerror "the config file for kernel version ${kernel_version} is already installed. Use '--force' to reinstall it."
 			fi
 		fi
@@ -385,15 +387,15 @@ elif [ "$os_name" = "ubuntu" ] ; then
 		install_options_checks
 		# calls install function
 		ubuntu_install
-	elif [ "$install_mode" = "simple_uninstall" ] ; then
-		if [ -z "$force" ] ; then
-			if [ ! -f "${kernel_version_file_dest}" ] ; then
+	elif [ "$install_mode" = "simple_uninstall" ]; then
+		if [ -z "$force" ]; then
+			if [ ! -f "${kernel_version_file_dest}" ]; then
 				myerror "it seems there is not a valid installation for kernel version ${kernel_version}. You should use the '--force' option."
 			fi
 		fi
 		echo " - Uninstalling for kernel $kernel_version..."
 		rm -f "${kernel_version_file_dest}" 2>/dev/null
-	elif [ "$install_mode" = "global_uninstall" ] ; then
+	elif [ "$install_mode" = "global_uninstall" ]; then
 		echo " - Global uninstalling for all kernel versions.."
 		echo " - Deleting all files and rebuilding all the initrd files.."
 		rm -f "${config_dir:?}"/rapiddisk_kernel_*
