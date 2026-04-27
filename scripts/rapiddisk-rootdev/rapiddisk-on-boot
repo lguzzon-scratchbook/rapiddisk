@@ -340,7 +340,7 @@ elif [ "$os_name" = "ubuntu" ] ; then
 	echo " - Ubuntu detected!"
 	# prepare some vars
 	hooks_dir="/usr/share/initramfs-tools/hooks"
-	scripts_dir="/usr/share/initramfs-tools"
+	scripts_dir="/usr/share/initramfs-tools/scripts/init-premount"
 	alt_scripts_dir="/usr/share/initramfs-tools/scripts/local-bottom"
 	config_dir="/etc/rapiddisk"
 	if [ ! -d "$hooks_dir" -o ! -d "$scripts_dir" -o ! -d "$alt_scripts_dir" ] ; then
@@ -350,7 +350,7 @@ elif [ "$os_name" = "ubuntu" ] ; then
 		mkdir -p "$config_dir"
 	fi
 	hook_dest="${hooks_dir}/rapiddisk_hook"
-	bootscript_dest="${scripts_dir}/rapiddisk_boot"
+	bootscript_dest="${scripts_dir}/rapiddisk"
 	subscript_dest_orig="${config_dir}/rapiddisk_sub.orig"
 	cleanscript_dest_orig="${alt_scripts_dir}/rapiddisk_clean"
 	kernel_version_file="rapiddisk_kernel_${kernel_version}"

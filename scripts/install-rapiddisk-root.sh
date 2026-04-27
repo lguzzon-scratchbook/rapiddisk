@@ -378,18 +378,16 @@ EOF
 	[[ "${FORCE:-false}" == "true" ]] && args+=(--force)
 	"$RAPIDDISK_BOOT" "${args[@]}"
 
-	cat <<EOF
-${GREEN}Installation completed successfully!
-A REBOOT IS REQUIRED to activate rapiddisk.
-
-After reboot, verify with:
-  sudo $(basename "$0") --verify
-  rapiddisk -l
-  rapiddisk -s
-
-To uninstall:
-  sudo $(basename "$0") --uninstall
-EOF
+	echo -e "${GREEN}Installation completed successfully!${NC}"
+	echo "A REBOOT IS REQUIRED to activate rapiddisk."
+	echo ""
+	echo "After reboot, verify with:"
+	echo "  sudo $(basename "$0") --verify"
+	echo "  rapiddisk -l"
+	echo "  rapiddisk -s"
+	echo ""
+	echo "To uninstall:"
+	echo "  sudo $(basename "$0") --uninstall"
 }
 
 uninstall_rapiddisk() {
