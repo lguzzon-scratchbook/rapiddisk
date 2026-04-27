@@ -42,7 +42,8 @@ get_system_memory() {
 }
 
 calculate_cache_size() {
-	local total_mem=$(get_system_memory)
+	local total_mem
+	total_mem=$(get_system_memory)
 	local cache_size=$((total_mem / 5))
 	((cache_size > 2048)) && {
 		cache_size=2048
@@ -88,7 +89,8 @@ check_alignment() {
 	local sysfs_start="/sys/block/${dev_name%%[0-9]*}/${dev_name}/start"
 
 	if [[ -f "$sysfs_start" ]]; then
-		local start_sector=$(<"$sysfs_start")
+		local start_sector
+		start_sector=$(<"$sysfs_start")
 		local logical_size=512
 		local start_byte=$((start_sector * logical_size))
 
@@ -105,7 +107,8 @@ check_alignment() {
 	fi
 
 	# Method 2: Fallback to lsblk
-	local start_sector=$(lsblk -no START "$dev" 2>/dev/null | head -1 || echo "")
+	local start_sector
+	start_sector=$(lsblk -no START "$dev" 2>/dev/null | head -1 || echo "")
 	if [[ -n "$start_sector" && "$start_sector" =~ ^[0-9]+$ ]]; then
 		DETECTED_ALIGNMENT_VALUE="lsblk:$start_sector"
 		if ((start_sector % 8 == 0)); then
@@ -118,7 +121,8 @@ check_alignment() {
 	fi
 
 	# Method 3: Fallback to blockdev sector size
-	local sector_size=$(blockdev --getss "$dev" 2>/dev/null || echo "")
+	local sector_size
+	sector_size=$(blockdev --getss "$dev" 2>/dev/null || echo "")
 	if [[ -n "$sector_size" && "$sector_size" =~ ^[0-9]+$ ]]; then
 		DETECTED_ALIGNMENT_VALUE="blockdev:$sector_size"
 		if ((sector_size == 4096)); then
@@ -174,7 +178,8 @@ check_rapiddisk_built() {
 		fi
 	fi
 
-	local project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+	local project_root
+	project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
 	local rapiddisk_bin="$project_root/src/rapiddisk"
 
 	if [[ -x "$rapiddisk_bin" ]]; then
@@ -229,7 +234,8 @@ install_dependencies() {
 }
 
 build_rapiddisk() {
-	local project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+	local project_root
+	project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 	log INF "rapiddisk not found - building from source..."
 	log INF "Project root: $project_root"
@@ -296,7 +302,8 @@ check_prerequisites() {
 	[[ -x "$RAPIDDISK_BOOT" ]] || log ERR "rapiddisk-on-boot not found at: $RAPIDDISK_BOOT"
 	[[ -f /etc/os-release ]] || log ERR "Rapiddisk-on-boot requires /etc/os-release for OS detection"
 
-	local os_id=$(grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"')
+	local os_id
+	os_id=$(grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"')
 	case "$os_id" in
 	ubuntu | debian | centos | rhel | fedora | almalinux | rocky) log INF "Detected OS: $os_id" ;;
 	*) log WRN "OS '$os_id' may not be fully supported. Continuing..." ;;
@@ -348,10 +355,14 @@ EOF
 install_rapiddisk() {
 	log INF "Starting rapiddisk installation on root device..."
 
-	local cache_size=$(calculate_cache_size)
-	local kernel_version=$(uname -r)
-	local root_device=$(detect_root_device)
-	local cache_mode=$(get_cache_mode "$root_device")
+	local cache_size
+	cache_size=$(calculate_cache_size)
+	local kernel_version
+	kernel_version=$(uname -r)
+	local root_device
+	root_device=$(detect_root_device)
+	local cache_mode
+	cache_mode=$(get_cache_mode "$root_device")
 
 	show_disk_info "$root_device"
 
@@ -391,7 +402,8 @@ EOF
 }
 
 uninstall_rapiddisk() {
-	local kernel_version=$(uname -r)
+	local kernel_version
+	kernel_version=$(uname -r)
 	log INF "Uninstalling rapiddisk for kernel $kernel_version..."
 	local args=(--uninstall --kernel="$kernel_version")
 	[[ "${FORCE:-false}" == "true" ]] && args+=(--force)
@@ -492,25 +504,40 @@ Rapiddisk Post-Reboot Verification
 EOF
 
 	echo "[1/6] Checking rapiddisk kernel modules..."
-	lsmod | grep -q "^rapiddisk-cache" && echo "      ✓ rapiddisk-cache module loaded" || {
+	local modules_found=0
+	if [[ -d /sys/module/rapiddisk_cache ]] || lsmod | grep -q "^rapiddisk_cache"; then
+		echo "      ✓ rapiddisk-cache module loaded"
+		modules_found=$((modules_found + 1))
+	else
 		echo "      ✗ rapiddisk-cache module NOT loaded"
 		exit_code=1
-	}
-	lsmod | grep -q "^rapiddisk" && echo "      ✓ rapiddisk module loaded" || {
+	fi
+	if [[ -d /sys/module/rapiddisk ]] || lsmod | grep -q "^rapiddisk[^_]"; then
+		echo "      ✓ rapiddisk module loaded"
+		modules_found=$((modules_found + 1))
+	else
 		echo "      ✗ rapiddisk module NOT loaded"
 		exit_code=1
-	}
+	fi
+	if ((modules_found == 0)); then
+		echo "      ! Kernel modules not loaded. Check if rapiddisk-dkms is installed for kernel $(uname -r):"
+		echo "        ls /lib/modules/$(uname -r)/kernel/drivers/block/rapiddisk*"
+		echo "        ls /var/lib/dkms/rapiddisk/"
+	fi
 
 	echo ""
 	echo "[2/6] Checking rapiddisk command..."
-	command -v rapiddisk &>/dev/null && echo "      ✓ rapiddisk command available" || {
+	if command -v rapiddisk &>/dev/null; then
+		echo "      ✓ rapiddisk command available"
+	else
 		echo "      ✗ rapiddisk command NOT available"
 		exit_code=1
-	}
+	fi
 
 	echo ""
 	echo "[3/6] Checking rapiddisk devices..."
-	local rapiddisk_devs=$(rapiddisk -l 2>/dev/null | grep -E "^rd[0-9]+" || true)
+	local rapiddisk_devs
+	rapiddisk_devs=$(rapiddisk -l 2>/dev/null | grep -E "^rd[0-9]+" || true)
 	if [[ -n "$rapiddisk_devs" ]]; then
 		echo "      ✓ Rapiddisk devices found:"
 		echo "$rapiddisk_devs" | while read -r line; do echo "        - $line"; done
@@ -521,7 +548,8 @@ EOF
 
 	echo ""
 	echo "[4/6] Checking cache mappings..."
-	local cache_maps=$(rapiddisk -l 2>/dev/null | grep -E "^rc-[wb][0-9]+" || true)
+	local cache_maps
+	cache_maps=$(rapiddisk -l 2>/dev/null | grep -E "^rc-" || true)
 	if [[ -n "$cache_maps" ]]; then
 		echo "      ✓ Cache mappings found:"
 		echo "$cache_maps" | while read -r line; do echo "        - $line"; done
@@ -532,25 +560,36 @@ EOF
 
 	echo ""
 	echo "[5/6] Checking root filesystem mount..."
-	local root_mount=$(mount | grep -E "^/dev/rc-" | grep "on / " || true)
+	local root_mount
+	root_mount=$(mount | grep "on / " | head -1)
 	if [[ -n "$root_mount" ]]; then
-		echo "      ✓ Root filesystem mounted on rapiddisk cached device:"
-		echo "        $root_mount"
-	else
-		local orig_root=$(mount | grep "on / " | grep -v "^/dev/rc-" || true)
-		if [[ -n "$orig_root" ]]; then
-			echo "      ✗ Root filesystem NOT on rapiddisk cached device:"
-			echo "        $orig_root"
-			echo "        (Cache may not be active - did you reboot?)"
-		else
-			echo "      ✗ Could not determine root filesystem mount"
+		local root_dev
+		root_dev=$(echo "$root_mount" | awk '{print $1}')
+		local dm_name=""
+		if [[ -b "$root_dev" ]]; then
+			dm_name=$(dmsetup deps -o devname "$root_dev" 2>/dev/null | grep -oE 'rc-\S+' || true)
 		fi
+		if [[ -n "$dm_name" ]] || echo "$root_mount" | grep -qE '/dev/rc-|/dev/mapper/rc-'; then
+			echo "      ✓ Root filesystem mounted on rapiddisk cached device:"
+			echo "        $root_mount"
+			if [[ -n "$dm_name" ]]; then
+				echo "        Cache device: $dm_name"
+			fi
+		else
+			echo "      ✗ Root filesystem NOT on rapiddisk cached device:"
+			echo "        $root_mount"
+			echo "        (Cache may not be active - did you reboot?)"
+			exit_code=1
+		fi
+	else
+		echo "      ✗ Could not determine root filesystem mount"
 		exit_code=1
 	fi
 
 	echo ""
 	echo "[6/6] Checking cache statistics..."
-	local cache_stats=$(rapiddisk -s 2>/dev/null || true)
+	local cache_stats
+	cache_stats=$(rapiddisk -s 2>/dev/null || true)
 	if [[ -n "$cache_stats" ]]; then
 		echo "      ✓ Cache statistics:"
 		echo ""
@@ -574,6 +613,9 @@ EOF
 		echo "  2. Check dmesg: dmesg | grep -i rapiddisk"
 		echo "  3. Verify initramfs: ls -la /boot/initrd* or /boot/initramfs*"
 		echo "  4. Check boot logs: journalctl | grep rapiddisk"
+		echo "  5. Check if rapiddisk modules exist for kernel $(uname -r):"
+		echo "     ls /lib/modules/$(uname -r)/kernel/drivers/block/rapiddisk*"
+		echo "  6. If modules are missing, rebuild/install them for current kernel"
 	fi
 	echo "========================================"
 	return "$exit_code"
