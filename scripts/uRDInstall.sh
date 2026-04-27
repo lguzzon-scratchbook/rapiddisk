@@ -8,12 +8,12 @@ set -euo pipefail
 
 # Auto-escalate if not root but sudoer
 if [[ "$(id -u)" -ne 0 ]]; then
-    if sudo -v 2>/dev/null; then
-        exec sudo "$0" "$@"
-    else
-        echo "Error: This script must be run as root (use: sudo $0)" >&2
-        exit 1
-    fi
+	if sudo -v 2>/dev/null; then
+		exec sudo "$0" "$@"
+	else
+		echo "Error: This script must be run as root (use: sudo $0)" >&2
+		exit 1
+	fi
 fi
 
 # ==============================================================================
@@ -33,6 +33,7 @@ readonly CONFIG_DIR="/etc/rapiddisk"
 readonly HOOKS_DIR="/usr/share/initramfs-tools/hooks"
 readonly SCRIPTS_DIR="/usr/share/initramfs-tools/scripts/local-bottom"
 readonly LOCAL_BOTTOM_DIR="/usr/share/initramfs-tools/scripts/local-bottom"
+# shellcheck disable=SC2034
 readonly DEBUG_LOG="/var/log/rapiddisk-install.log"
 
 # ==============================================================================

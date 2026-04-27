@@ -150,21 +150,21 @@ install_options_checks() {
 		root_line="$(grep -vE '^[ #]+' /etc/fstab | grep -m 1 -oP '^.*?[^\s]+\s+/\s+')"
 		root_first_char="$(echo "$root_line" | grep -o '^.')"
 		case $root_first_char in
-			U)
-				uuid="$(echo "$root_line" | grep -oP '[a-fA-F0-9]{8}-([a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}')"
-				root_device=$(readlink -f "/dev/disk/by-uuid/$uuid" 2>/dev/null)
-				;;
-			L)
-				label="$(echo "$root_line" | grep -oP '=[^\s]+' | tr -d '=')"
-				root_device=$(readlink -f "/dev/disk/by-label/$label" 2>/dev/null)
-				;;
-			/)
-				device="$(echo "$root_line" | grep -oP '^[^\s]+')"
-				root_device=$(readlink -f "$device" 2>/dev/null)
-				;;
-			*)
-				myerror "could not find the root device from /etc/fstab. Use the '--root' option."
-				;;
+		U)
+			uuid="$(echo "$root_line" | grep -oP '[a-fA-F0-9]{8}-([a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}')"
+			root_device=$(readlink -f "/dev/disk/by-uuid/$uuid" 2>/dev/null)
+			;;
+		L)
+			label="$(echo "$root_line" | grep -oP '=[^\s]+' | tr -d '=')"
+			root_device=$(readlink -f "/dev/disk/by-label/$label" 2>/dev/null)
+			;;
+		/)
+			device="$(echo "$root_line" | grep -oP '^[^\s]+')"
+			root_device=$(readlink -f "$device" 2>/dev/null)
+			;;
+		*)
+			myerror "could not find the root device from /etc/fstab. Use the '--root' option."
+			;;
 		esac
 		# TODO this check must be improved
 		if ! echo "$root_device" | grep -E '^/dev/[a-zA-Z]+[0-9]*(p[0-9]+)?$' >/dev/null 2>/dev/null; then
@@ -206,66 +206,66 @@ fi
 # parsing arguments
 for i in "$@"; do
 	case $i in
-		--kernel=*)
-			kernel_version="${i#*=}"
-			shift # past argument=value
-			;;
-		--uninstall)
-			install_mode=simple_uninstall
-			shift # past argument with no value
-			;;
-		--global-uninstall)
-			if [ -n "$install_mode" ]; then
-				ihelp
-				myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
-			fi
-			install_mode=global_uninstall
-			shift # past argument with no value
-			;;
-		--install)
-			if [ -n "$install_mode" ]; then
-				ihelp
-				myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
-			fi
-			install_mode=simple_install
-			shift # past argument with no value
-			;;
-		--root=*)
-			root_device="${i#*=}"
-			shift # past argument=value
-			;;
-		--size=*)
-			ramdisk_size="${i#*=}"
-			shift # past argument=value
-			;;
-		--cache-mode=*)
-			cache_mode="${i#*=}"
-			shift # past argument=value
-			;;
-		--force)
-			force=1
-			shift # past argument with no value
-			;;
-		--no-initramfs)
-			noinitramfs=1
-			shift # past argument with no value
-			;;
-		--skip-kernel-check)
-			skipkernelcheck=1
-			shift # past argument with no value
-			;;
-		--help)
+	--kernel=*)
+		kernel_version="${i#*=}"
+		shift # past argument=value
+		;;
+	--uninstall)
+		install_mode=simple_uninstall
+		shift # past argument with no value
+		;;
+	--global-uninstall)
+		if [ -n "$install_mode" ]; then
 			ihelp
-			exit 1
-			;;
-		-h)
+			myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
+		fi
+		install_mode=global_uninstall
+		shift # past argument with no value
+		;;
+	--install)
+		if [ -n "$install_mode" ]; then
 			ihelp
-			exit 1
-			;;
-		*)
-			ihelp
-			myerror "unknown argument."
-			;;
+			myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
+		fi
+		install_mode=simple_install
+		shift # past argument with no value
+		;;
+	--root=*)
+		root_device="${i#*=}"
+		shift # past argument=value
+		;;
+	--size=*)
+		ramdisk_size="${i#*=}"
+		shift # past argument=value
+		;;
+	--cache-mode=*)
+		cache_mode="${i#*=}"
+		shift # past argument=value
+		;;
+	--force)
+		force=1
+		shift # past argument with no value
+		;;
+	--no-initramfs)
+		noinitramfs=1
+		shift # past argument with no value
+		;;
+	--skip-kernel-check)
+		skipkernelcheck=1
+		shift # past argument with no value
+		;;
+	--help)
+		ihelp
+		exit 1
+		;;
+	-h)
+		ihelp
+		exit 1
+		;;
+	*)
+		ihelp
+		myerror "unknown argument."
+		;;
 	esac
 done # Credits https://stackoverflow.com/questions/192249/how-do-i-parse-command-line-arguments-in-bash
 

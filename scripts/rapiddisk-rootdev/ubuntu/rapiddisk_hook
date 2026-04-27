@@ -5,10 +5,10 @@ prereqs() {
 }
 
 case $1 in
-	prereqs)
-		prereqs
-		exit 0
-		;;
+prereqs)
+	prereqs
+	exit 0
+	;;
 esac
 
 . /usr/share/initramfs-tools/hook-functions
@@ -21,6 +21,8 @@ else
 fi
 config_dir="/etc/rapiddisk"
 for i in "${config_dir}"/rapiddisk_kernel_*; do
+	# Extract version from filename (rapiddisk_kernel_<version>)
+	version=$(basename "$i" | sed 's/rapiddisk_kernel_//')
 	if [ "${config_dir}/rapiddisk_kernel_${version}" = "$i" ]; then
 		size="$(head -n 1 "$i")"
 		device="$(head -n 2 "$i" | tail -n 1)"

@@ -18,12 +18,12 @@ log() {
 	local level=$1
 	local msg=$2
 	case $level in
-		ERR)
-			echo -e "${RED}ERROR: $msg${NC}" >&2
-			exit 1
-			;;
-		INF) echo -e "${GREEN}INFO: $msg${NC}" >&2 ;;
-		WRN) echo -e "${YELLOW}WARN: $msg${NC}" >&2 ;;
+	ERR)
+		echo -e "${RED}ERROR: $msg${NC}" >&2
+		exit 1
+		;;
+	INF) echo -e "${GREEN}INFO: $msg${NC}" >&2 ;;
+	WRN) echo -e "${YELLOW}WARN: $msg${NC}" >&2 ;;
 	esac
 }
 
@@ -159,18 +159,18 @@ get_cache_mode() {
 	local dev="$1"
 	check_alignment "$dev"
 	case $? in
-		0)
-			log INF "✓ 4k-aligned - using write-back (wb)"
-			echo "wb"
-			;;
-		1)
-			log WRN "✗ Not 4k-aligned - using write-through (wt)"
-			echo "wt"
-			;;
-		2)
-			log WRN "⚠ Alignment unknown - using write-through (wt)"
-			echo "wt"
-			;;
+	0)
+		log INF "✓ 4k-aligned - using write-back (wb)"
+		echo "wb"
+		;;
+	1)
+		log WRN "✗ Not 4k-aligned - using write-through (wt)"
+		echo "wt"
+		;;
+	2)
+		log WRN "⚠ Alignment unknown - using write-through (wt)"
+		echo "wt"
+		;;
 	esac
 }
 
@@ -237,15 +237,15 @@ install_dependencies() {
 
 	log INF "Installing dependencies: ${packages[*]}"
 	case "$pkg_manager" in
-		apt)
-			if ! apt-get update -qq; then
-				log WRN "apt-get update failed, continuing..."
-			fi
-			apt-get install -y "${packages[@]}"
-			;;
-		dnf | yum)
-			"$pkg_manager" install -y "${packages[@]}"
-			;;
+	apt)
+		if ! apt-get update -qq; then
+			log WRN "apt-get update failed, continuing..."
+		fi
+		apt-get install -y "${packages[@]}"
+		;;
+	dnf | yum)
+		"$pkg_manager" install -y "${packages[@]}"
+		;;
 	esac
 }
 
@@ -321,8 +321,8 @@ check_prerequisites() {
 	local os_id
 	os_id=$(grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"')
 	case "$os_id" in
-		ubuntu | debian | centos | rhel | fedora | almalinux | rocky) log INF "Detected OS: $os_id" ;;
-		*) log WRN "OS '$os_id' may not be fully supported. Continuing..." ;;
+	ubuntu | debian | centos | rhel | fedora | almalinux | rocky) log INF "Detected OS: $os_id" ;;
+	*) log WRN "OS '$os_id' may not be fully supported. Continuing..." ;;
 	esac
 	log INF "Prerequisites check passed"
 }
@@ -476,26 +476,26 @@ EOF
 	echo ""
 
 	case $alignment_result in
-		0)
-			echo -e "${GREEN}✓ 4k-aligned${NC}"
-			echo ""
-			echo "This filesystem is 4k-aligned and supports:"
-			echo "  - Write-back (wb) cache mode for best performance"
-			echo "  - Write-through (wt) cache mode for safety"
-			;;
-		1)
-			echo -e "${YELLOW}✗ Not 4k-aligned${NC}"
-			echo ""
-			echo "This filesystem is NOT 4k-aligned and supports:"
-			echo "  - Write-through (wt) cache mode only"
-			echo "  - Write-back (wb) is NOT supported"
-			;;
-		2)
-			echo -e "${YELLOW}⚠ Could not determine alignment${NC}"
-			echo ""
-			echo "Detection failed using available methods."
-			echo "For safety, the script will use write-through (wt) mode."
-			;;
+	0)
+		echo -e "${GREEN}✓ 4k-aligned${NC}"
+		echo ""
+		echo "This filesystem is 4k-aligned and supports:"
+		echo "  - Write-back (wb) cache mode for best performance"
+		echo "  - Write-through (wt) cache mode for safety"
+		;;
+	1)
+		echo -e "${YELLOW}✗ Not 4k-aligned${NC}"
+		echo ""
+		echo "This filesystem is NOT 4k-aligned and supports:"
+		echo "  - Write-through (wt) cache mode only"
+		echo "  - Write-back (wb) is NOT supported"
+		;;
+	2)
+		echo -e "${YELLOW}⚠ Could not determine alignment${NC}"
+		echo ""
+		echo "Detection failed using available methods."
+		echo "For safety, the script will use write-through (wt) mode."
+		;;
 	esac
 
 	cat <<EOF
@@ -680,16 +680,16 @@ main() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-			-h | --help)
-				show_help
-				exit 0
-				;;
-			-f | --force) FORCE=true ;;
-			-u | --uninstall) action="uninstall" ;;
-			-g | --global-uninstall) action="global-uninstall" ;;
-			-v | --verify) action="verify" ;;
-			-c | --check-alignment) action="check-alignment" ;;
-			*) log ERR "Unknown option: $1. Use -h for help." ;;
+		-h | --help)
+			show_help
+			exit 0
+			;;
+		-f | --force) FORCE=true ;;
+		-u | --uninstall) action="uninstall" ;;
+		-g | --global-uninstall) action="global-uninstall" ;;
+		-v | --verify) action="verify" ;;
+		-c | --check-alignment) action="check-alignment" ;;
+		*) log ERR "Unknown option: $1. Use -h for help." ;;
 		esac
 		shift
 	done
@@ -697,28 +697,28 @@ main() {
 	export FORCE
 
 	case "$action" in
-		install)
-			check_prerequisites
-			install_rapiddisk
-			;;
-		uninstall)
-			check_root
-			check_uninstall_prerequisites
-			uninstall_rapiddisk
-			;;
-		global-uninstall)
-			check_root
-			check_uninstall_prerequisites
-			global_uninstall
-			;;
-		verify)
-			check_root
-			verify_rapiddisk
-			;;
-		check-alignment)
-			check_root
-			show_alignment_info
-			;;
+	install)
+		check_prerequisites
+		install_rapiddisk
+		;;
+	uninstall)
+		check_root
+		check_uninstall_prerequisites
+		uninstall_rapiddisk
+		;;
+	global-uninstall)
+		check_root
+		check_uninstall_prerequisites
+		global_uninstall
+		;;
+	verify)
+		check_root
+		verify_rapiddisk
+		;;
+	check-alignment)
+		check_root
+		show_alignment_info
+		;;
 	esac
 }
 
