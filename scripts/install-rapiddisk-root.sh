@@ -608,7 +608,7 @@ EOF
 
 	echo ""
 	echo "[6/6] Checking cache statistics..."
-	local cache_stats cache_device
+	local cache_stats cache_device stats_line
 	# Get first cache device for statistics lookup
 	cache_device=$(echo "$cache_devices" | awk '{print $1}')
 	if [[ -n "$cache_device" ]]; then
@@ -616,7 +616,36 @@ EOF
 		if [[ -n "$cache_stats" ]]; then
 			echo "      ✓ Cache statistics for $cache_device:"
 			echo ""
-			printf '%s\n' "$cache_stats" | while IFS= read -r line; do printf '        %s\n' "$line"; done
+			# Print headers and stats with proper indentation
+			printf '%s\n' "$cache_stats" | while IFS= read -r line; do
+				# Check if line contains numeric statistics (space-separated numbers)
+				if [[ "$line" =~ ^[0-9]+(\ [0-9]+)+$ ]]; then
+					stats_line="$line"
+					# Print headers above the numeric line
+					printf '        %-12s %-12s %-12s %-12s %-12s %-12s %-12s\n' \
+						"reads" "writes" "cache_hits" "replacement" "wr_replace" "rd_inval" "wr_inval"
+					printf '        %-12s %-12s %-12s %-12s %-12s %-12s %-12s\n' \
+						"$(echo "$stats_line" | awk '{print $1}')" \
+						"$(echo "$stats_line" | awk '{print $2}')" \
+						"$(echo "$stats_line" | awk '{print $3}')" \
+						"$(echo "$stats_line" | awk '{print $4}')" \
+						"$(echo "$stats_line" | awk '{print $5}')" \
+						"$(echo "$stats_line" | awk '{print $6}')" \
+						"$(echo "$stats_line" | awk '{print $7}')"
+					printf '        %-12s %-12s %-12s %-12s %-12s %-12s %-12s\n' \
+						"uncached_rd" "uncached_wr" "disk_reads" "disk_writes" "cache_reads" "cache_writes" "read_ops"
+					printf '        %-12s %-12s %-12s %-12s %-12s %-12s %-12s\n' \
+						"$(echo "$stats_line" | awk '{print $8}')" \
+						"$(echo "$stats_line" | awk '{print $9}')" \
+						"$(echo "$stats_line" | awk '{print $10}')" \
+						"$(echo "$stats_line" | awk '{print $11}')" \
+						"$(echo "$stats_line" | awk '{print $12}')" \
+						"$(echo "$stats_line" | awk '{print $13}')" \
+						"$(echo "$stats_line" | awk '{print $14}')"
+				else
+					printf '        %s\n' "$line"
+				fi
+			done
 		else
 			echo "      ! Cache statistics not available for $cache_device"
 		fi

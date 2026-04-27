@@ -1,0 +1,38 @@
+#!/bin/sh
+PREREQ=""
+prereqs() {
+	echo "$PREREQ"
+}
+
+case $1 in
+prereqs)
+	prereqs
+	exit 0
+	;;
+esac
+
+. /scripts/functions
+
+# Begin real processing below this line
+log_warning_msg "rapiddisk: flushing all rapiddisk cache devices before shutdown"
+
+# Flush all rapiddisk mapped devices (rc-*)
+# Check if any rc-* devices exist before entering loop
+if [ -e /dev/mapper/rc-* ]; then
+	for dmrc in /dev/mapper/rc-*; do
+		# Double-check device still exists (may disappear between iterations)
+		[ -e "$dmrc" ] || continue
+
+		log_warning_msg "rapiddisk: flushing ${dmrc}"
+		if ! dmsetup message "${dmrc}" 0 flush 2>/dev/null; then
+			log_failure_msg "rapiddisk: FAILED to flush ${dmrc} - data may be lost!"
+		fi
+		# Suspend/resume ensures cache is fully synchronized
+		dmsetup suspend "${dmrc}" 2>/dev/null || true
+		dmsetup resume "${dmrc}" 2>/dev/null || true
+	done
+else
+	log_warning_msg "rapiddisk: no cache devices found to flush"
+fi
+
+exit 0

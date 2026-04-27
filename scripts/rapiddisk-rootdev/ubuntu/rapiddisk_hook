@@ -39,8 +39,10 @@ for i in "${config_dir}"/rapiddisk_kernel_*; do
 			manual_add_modules dm-writecache
 		fi
 		copy_exec /sbin/rapiddisk /sbin/rapiddisk
+		copy_exec /usr/sbin/dmsetup /sbin/dmsetup
 		copy_file binary "${cwd}/rapiddisk_sub" /sbin/
 		copy_file script "${source_dir}/ubuntu/rapiddisk_boot" /scripts/init-premount/rapiddisk
+		copy_file script "${source_dir}/ubuntu/rapiddisk_shutdown" /scripts/shutdown/rapiddisk_shutdown
 		rm "${cwd}/rapiddisk_sub"
 		break 2
 	fi

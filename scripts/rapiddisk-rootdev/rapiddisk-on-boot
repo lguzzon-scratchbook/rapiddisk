@@ -111,6 +111,13 @@ ubuntu_install() {
 		fi
 		chmod +x "${cleanscript_dest_orig}" 2>/dev/null
 	fi
+	if [ ! -x "${shutdownscript_dest}" ] || [ -n "${force}" ]; then
+		echo " - Copying ${source_dir}/ubuntu/rapiddisk_shutdown to ${shutdownscript_dest}..."
+		if ! cp -f "${source_dir}/ubuntu/rapiddisk_shutdown" "${shutdownscript_dest}"; then
+			myerror "could not copy rapiddisk_shutdown to ${shutdownscript_dest}."
+		fi
+		chmod +x "${shutdownscript_dest}" 2>/dev/null
+	fi
 	echo " - Creating kernel options file ..."
 	echo >"${kernel_version_file_dest}" "${ramdisk_size}"
 	echo >>"${kernel_version_file_dest}" "${root_device}"
@@ -340,6 +347,7 @@ elif [ "$os_name" = "ubuntu" ]; then
 	hooks_dir="/usr/share/initramfs-tools/hooks"
 	scripts_dir="/usr/share/initramfs-tools/scripts/init-premount"
 	alt_scripts_dir="/usr/share/initramfs-tools/scripts/local-bottom"
+	shutdown_scripts_dir="/usr/share/initramfs-tools/scripts/shutdown"
 	config_dir="/etc/rapiddisk"
 	if [ ! -d "$hooks_dir" ] || [ ! -d "$scripts_dir" ] || [ ! -d "$alt_scripts_dir" ]; then
 		myerror "I can't find any suitable place to write initramfs' scripts."
@@ -347,10 +355,14 @@ elif [ "$os_name" = "ubuntu" ]; then
 	if [ ! -d "$config_dir" ]; then
 		mkdir -p "$config_dir"
 	fi
+	if [ ! -d "$shutdown_scripts_dir" ]; then
+		mkdir -p "$shutdown_scripts_dir"
+	fi
 	hook_dest="${hooks_dir}/rapiddisk_hook"
 	bootscript_dest="${scripts_dir}/rapiddisk"
 	subscript_dest_orig="${config_dir}/rapiddisk_sub.orig"
 	cleanscript_dest_orig="${alt_scripts_dir}/rapiddisk_clean"
+	shutdownscript_dest="${shutdown_scripts_dir}/rapiddisk_shutdown"
 	kernel_version_file="rapiddisk_kernel_${kernel_version}"
 	kernel_version_file_dest="${config_dir}/${kernel_version_file}"
 	# what should we do?
@@ -405,6 +417,7 @@ elif [ "$os_name" = "ubuntu" ]; then
 		rm -f "${bootscript_dest}" 2>/dev/null
 		rm -f "${subscript_dest_orig}" 2>/dev/null
 		rm -f "${cleanscript_dest_orig}" 2>/dev/null
+		rm -f "${shutdownscript_dest}" 2>/dev/null
 		kernel_version=all
 	fi
 	ubuntu_end
