@@ -150,24 +150,24 @@ install_options_checks() {
 		root_line="$(grep -vE '^[ #]+' /etc/fstab | grep -m 1 -oP '^.*?[^\s]+\s+/\s+')"
 		root_first_char="$(echo "$root_line" | grep -o '^.')"
 		case $root_first_char in
-		U)
-			uuid="$(echo "$root_line" | grep -oP '[\w\d]{8}-([\w\d]{4}-){3}[\w\d]{12}')"
-			root_device=$(readlink -f "/dev/disk/by-uuid/$uuid" 2>/dev/null)
-			;;
-		L)
-			label="$(echo "$root_line" | grep -oP '=[^\s]+' | tr -d '=')"
-			root_device=$(readlink -f "/dev/disk/by-label/$label" 2>/dev/null)
-			;;
-		/)
-			device="$(echo "$root_line" | grep -oP '^[^\s]+')"
-			root_device=$(readlink -f "$device" 2>/dev/null)
-			;;
-		*)
-			myerror "could not find the root device from /etc/fstab. Use the '--root' option."
-			;;
+			U)
+				uuid="$(echo "$root_line" | grep -oP '[a-fA-F0-9]{8}-([a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}')"
+				root_device=$(readlink -f "/dev/disk/by-uuid/$uuid" 2>/dev/null)
+				;;
+			L)
+				label="$(echo "$root_line" | grep -oP '=[^\s]+' | tr -d '=')"
+				root_device=$(readlink -f "/dev/disk/by-label/$label" 2>/dev/null)
+				;;
+			/)
+				device="$(echo "$root_line" | grep -oP '^[^\s]+')"
+				root_device=$(readlink -f "$device" 2>/dev/null)
+				;;
+			*)
+				myerror "could not find the root device from /etc/fstab. Use the '--root' option."
+				;;
 		esac
 		# TODO this check must be improved
-		if ! echo "$root_device" | grep -P '^/dev/[a-zA-Z]+\d*(p\d+)?$' >/dev/null 2>/dev/null; then
+		if ! echo "$root_device" | grep -E '^/dev/[a-zA-Z]+[0-9]*(p[0-9]+)?$' >/dev/null 2>/dev/null; then
 			myerror "root_device '$root_device' must be in the form '/dev/xxx' or '/dev/xxxn with n as a positive integer. Use the '--root' option."
 		fi
 		echo " - Root device '$root_device' was found!"
@@ -206,66 +206,66 @@ fi
 # parsing arguments
 for i in "$@"; do
 	case $i in
-	--kernel=*)
-		kernel_version="${i#*=}"
-		shift # past argument=value
-		;;
-	--uninstall)
-		install_mode=simple_uninstall
-		shift # past argument with no value
-		;;
-	--global-uninstall)
-		if [ -n "$install_mode" ]; then
+		--kernel=*)
+			kernel_version="${i#*=}"
+			shift # past argument=value
+			;;
+		--uninstall)
+			install_mode=simple_uninstall
+			shift # past argument with no value
+			;;
+		--global-uninstall)
+			if [ -n "$install_mode" ]; then
+				ihelp
+				myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
+			fi
+			install_mode=global_uninstall
+			shift # past argument with no value
+			;;
+		--install)
+			if [ -n "$install_mode" ]; then
+				ihelp
+				myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
+			fi
+			install_mode=simple_install
+			shift # past argument with no value
+			;;
+		--root=*)
+			root_device="${i#*=}"
+			shift # past argument=value
+			;;
+		--size=*)
+			ramdisk_size="${i#*=}"
+			shift # past argument=value
+			;;
+		--cache-mode=*)
+			cache_mode="${i#*=}"
+			shift # past argument=value
+			;;
+		--force)
+			force=1
+			shift # past argument with no value
+			;;
+		--no-initramfs)
+			noinitramfs=1
+			shift # past argument with no value
+			;;
+		--skip-kernel-check)
+			skipkernelcheck=1
+			shift # past argument with no value
+			;;
+		--help)
 			ihelp
-			myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
-		fi
-		install_mode=global_uninstall
-		shift # past argument with no value
-		;;
-	--install)
-		if [ -n "$install_mode" ]; then
+			exit 1
+			;;
+		-h)
 			ihelp
-			myerror "only one betweeen '--install, '--uninstall' and --global-uninstall can be specified."
-		fi
-		install_mode=simple_install
-		shift # past argument with no value
-		;;
-	--root=*)
-		root_device="${i#*=}"
-		shift # past argument=value
-		;;
-	--size=*)
-		ramdisk_size="${i#*=}"
-		shift # past argument=value
-		;;
-	--cache-mode=*)
-		cache_mode="${i#*=}"
-		shift # past argument=value
-		;;
-	--force)
-		force=1
-		shift # past argument with no value
-		;;
-	--no-initramfs)
-		noinitramfs=1
-		shift # past argument with no value
-		;;
-	--skip-kernel-check)
-		skipkernelcheck=1
-		shift # past argument with no value
-		;;
-	--help)
-		ihelp
-		exit 1
-		;;
-	-h)
-		ihelp
-		exit 1
-		;;
-	*)
-		ihelp
-		myerror "unknown argument."
-		;;
+			exit 1
+			;;
+		*)
+			ihelp
+			myerror "unknown argument."
+			;;
 	esac
 done # Credits https://stackoverflow.com/questions/192249/how-do-i-parse-command-line-arguments-in-bash
 
@@ -364,14 +364,18 @@ elif [ "$os_name" = "ubuntu" ]; then
 			myerror "'modinfo' command not found."
 		fi
 		if ! $modinfo_command >/dev/null 2>&1 -k "$kernel_version" -n rapiddisk; then
-			if dkms status -m rapiddisk -k "$kernel_version" | grep -q 'added$'; then
-				rapiddisk_version="$(dkms status -m rapiddisk -k "$kernel_version" | grep -oP ',\s+[^:\s]+' | sed 's/, //')"
-				if dkms 2>/dev/null install -m rapiddisk -v "$rapiddisk_version" -k "$kernel_version"; then
-					missing_modules=0
+			# Check if dkms command exists before using it
+			dkms_command="$(which 2>/dev/null dkms | head -n 1)"
+			if [ -n "$dkms_command" ]; then
+				if $dkms_command status -m rapiddisk -k "$kernel_version" | grep -q 'added$'; then
+					rapiddisk_version="$($dkms_command status -m rapiddisk -k "$kernel_version" | grep -oP ',\s+[^:\s]+' | sed 's/, //')"
+					if $dkms_command 2>/dev/null install -m rapiddisk -v "$rapiddisk_version" -k "$kernel_version"; then
+						missing_modules=0
+					fi
 				fi
 			fi
 			if [ -z "$missing_modules" ]; then
-				myerror "no rapiddisk modules found for chosen kernel."
+				myerror "no rapiddisk modules found for chosen kernel. Install the rapiddisk kernel module for kernel $kernel_version or install dkms."
 			fi
 		fi
 		if [ -z "$force" ]; then

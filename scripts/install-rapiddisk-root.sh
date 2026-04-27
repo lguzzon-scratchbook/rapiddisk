@@ -18,12 +18,12 @@ log() {
 	local level=$1
 	local msg=$2
 	case $level in
-	ERR)
-		echo -e "${RED}ERROR: $msg${NC}" >&2
-		exit 1
-		;;
-	INF) echo -e "${GREEN}INFO: $msg${NC}" >&2 ;;
-	WRN) echo -e "${YELLOW}WARN: $msg${NC}" >&2 ;;
+		ERR)
+			echo -e "${RED}ERROR: $msg${NC}" >&2
+			exit 1
+			;;
+		INF) echo -e "${GREEN}INFO: $msg${NC}" >&2 ;;
+		WRN) echo -e "${YELLOW}WARN: $msg${NC}" >&2 ;;
 	esac
 }
 
@@ -86,12 +86,28 @@ check_alignment() {
 
 	# Method 1: Use sysfs (most reliable) - check /sys/block/DEVICE/PARTITION/start
 	local dev_name="${dev#/dev/}"
-	local sysfs_start="/sys/block/${dev_name%%[0-9]*}/${dev_name}/start"
+	local parent_device
+
+	# Extract parent device name (handle NVMe: nvme0n1p1 -> nvme0n1, sd/a/sda1 -> sda)
+	if [[ "$dev_name" =~ ^nvme[0-9]+n[0-9]+p[0-9]+$ ]]; then
+		parent_device="${dev_name%p*}"
+	elif [[ "$dev_name" =~ ^mmcblk[0-9]+p[0-9]+$ ]]; then
+		parent_device="${dev_name%p*}"
+	else
+		parent_device="${dev_name%%[0-9]*}"
+	fi
+
+	local sysfs_start="/sys/block/${parent_device}/${dev_name}/start"
+	local sysfs_logical_size="/sys/block/${parent_device}/queue/logical_block_size"
 
 	if [[ -f "$sysfs_start" ]]; then
 		local start_sector
 		start_sector=$(<"$sysfs_start")
 		local logical_size=512
+		# Get actual logical sector size if available
+		if [[ -f "$sysfs_logical_size" ]]; then
+			logical_size=$(<"$sysfs_logical_size")
+		fi
 		local start_byte=$((start_sector * logical_size))
 
 		DETECTED_ALIGNMENT_VALUE="sysfs:start:$start_sector:byte:$start_byte"
@@ -143,18 +159,18 @@ get_cache_mode() {
 	local dev="$1"
 	check_alignment "$dev"
 	case $? in
-	0)
-		log INF "✓ 4k-aligned - using write-back (wb)"
-		echo "wb"
-		;;
-	1)
-		log WRN "✗ Not 4k-aligned - using write-through (wt)"
-		echo "wt"
-		;;
-	2)
-		log WRN "⚠ Alignment unknown - using write-through (wt)"
-		echo "wt"
-		;;
+		0)
+			log INF "✓ 4k-aligned - using write-back (wb)"
+			echo "wb"
+			;;
+		1)
+			log WRN "✗ Not 4k-aligned - using write-through (wt)"
+			echo "wt"
+			;;
+		2)
+			log WRN "⚠ Alignment unknown - using write-through (wt)"
+			echo "wt"
+			;;
 	esac
 }
 
@@ -221,15 +237,15 @@ install_dependencies() {
 
 	log INF "Installing dependencies: ${packages[*]}"
 	case "$pkg_manager" in
-	apt)
-		if ! apt-get update -qq; then
-			log WRN "apt-get update failed, continuing..."
-		fi
-		apt-get install -y "${packages[@]}"
-		;;
-	dnf | yum)
-		"$pkg_manager" install -y "${packages[@]}"
-		;;
+		apt)
+			if ! apt-get update -qq; then
+				log WRN "apt-get update failed, continuing..."
+			fi
+			apt-get install -y "${packages[@]}"
+			;;
+		dnf | yum)
+			"$pkg_manager" install -y "${packages[@]}"
+			;;
 	esac
 }
 
@@ -289,7 +305,7 @@ build_rapiddisk() {
 		fi
 	fi
 
-	cd - >/dev/null || true
+	cd "$SCRIPT_DIR" || log ERR "Failed to return to script directory"
 	log INF "rapiddisk built successfully"
 }
 
@@ -305,8 +321,8 @@ check_prerequisites() {
 	local os_id
 	os_id=$(grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"')
 	case "$os_id" in
-	ubuntu | debian | centos | rhel | fedora | almalinux | rocky) log INF "Detected OS: $os_id" ;;
-	*) log WRN "OS '$os_id' may not be fully supported. Continuing..." ;;
+		ubuntu | debian | centos | rhel | fedora | almalinux | rocky) log INF "Detected OS: $os_id" ;;
+		*) log WRN "OS '$os_id' may not be fully supported. Continuing..." ;;
 	esac
 	log INF "Prerequisites check passed"
 }
@@ -460,26 +476,26 @@ EOF
 	echo ""
 
 	case $alignment_result in
-	0)
-		echo -e "${GREEN}✓ 4k-aligned${NC}"
-		echo ""
-		echo "This filesystem is 4k-aligned and supports:"
-		echo "  - Write-back (wb) cache mode for best performance"
-		echo "  - Write-through (wt) cache mode for safety"
-		;;
-	1)
-		echo -e "${YELLOW}✗ Not 4k-aligned${NC}"
-		echo ""
-		echo "This filesystem is NOT 4k-aligned and supports:"
-		echo "  - Write-through (wt) cache mode only"
-		echo "  - Write-back (wb) is NOT supported"
-		;;
-	2)
-		echo -e "${YELLOW}⚠ Could not determine alignment${NC}"
-		echo ""
-		echo "Detection failed using available methods."
-		echo "For safety, the script will use write-through (wt) mode."
-		;;
+		0)
+			echo -e "${GREEN}✓ 4k-aligned${NC}"
+			echo ""
+			echo "This filesystem is 4k-aligned and supports:"
+			echo "  - Write-back (wb) cache mode for best performance"
+			echo "  - Write-through (wt) cache mode for safety"
+			;;
+		1)
+			echo -e "${YELLOW}✗ Not 4k-aligned${NC}"
+			echo ""
+			echo "This filesystem is NOT 4k-aligned and supports:"
+			echo "  - Write-through (wt) cache mode only"
+			echo "  - Write-back (wb) is NOT supported"
+			;;
+		2)
+			echo -e "${YELLOW}⚠ Could not determine alignment${NC}"
+			echo ""
+			echo "Detection failed using available methods."
+			echo "For safety, the script will use write-through (wt) mode."
+			;;
 	esac
 
 	cat <<EOF
@@ -537,7 +553,8 @@ EOF
 	echo ""
 	echo "[3/6] Checking rapiddisk devices..."
 	local rapiddisk_devs
-	rapiddisk_devs=$(rapiddisk -l 2>/dev/null | grep -E "^rd[0-9]+" || true)
+	# Use grep -oE to extract device names from "RapidDisk Device N: rdX" format
+	rapiddisk_devs=$(rapiddisk -l 2>/dev/null | grep -oE "rd[0-9]+" | sort -u || true)
 	if [[ -n "$rapiddisk_devs" ]]; then
 		echo "      ✓ Rapiddisk devices found:"
 		echo "$rapiddisk_devs" | while read -r line; do echo "        - $line"; done
@@ -548,8 +565,11 @@ EOF
 
 	echo ""
 	echo "[4/6] Checking cache mappings..."
-	local cache_maps
-	cache_maps=$(rapiddisk -l 2>/dev/null | grep -E "^rc-" || true)
+	local cache_maps cache_devices
+	# Use grep -oE to extract cache device names from "dm-writecache Target N: rc-XXX" format
+	cache_maps=$(rapiddisk -l 2>/dev/null | grep -oE "rc-[a-zA-Z0-9_-]+" | sort -u || true)
+	# Also capture just the device names for stats lookup
+	cache_devices=$(echo "$cache_maps" | tr '\n' ' ')
 	if [[ -n "$cache_maps" ]]; then
 		echo "      ✓ Cache mappings found:"
 		echo "$cache_maps" | while read -r line; do echo "        - $line"; done
@@ -588,14 +608,20 @@ EOF
 
 	echo ""
 	echo "[6/6] Checking cache statistics..."
-	local cache_stats
-	cache_stats=$(rapiddisk -s 2>/dev/null || true)
-	if [[ -n "$cache_stats" ]]; then
-		echo "      ✓ Cache statistics:"
-		echo ""
-		printf '%s\n' "$cache_stats" | while IFS= read -r line; do printf '        %s\n' "$line"; done
+	local cache_stats cache_device
+	# Get first cache device for statistics lookup
+	cache_device=$(echo "$cache_devices" | awk '{print $1}')
+	if [[ -n "$cache_device" ]]; then
+		cache_stats=$(rapiddisk -s "$cache_device" 2>/dev/null || true)
+		if [[ -n "$cache_stats" ]]; then
+			echo "      ✓ Cache statistics for $cache_device:"
+			echo ""
+			printf '%s\n' "$cache_stats" | while IFS= read -r line; do printf '        %s\n' "$line"; done
+		else
+			echo "      ! Cache statistics not available for $cache_device"
+		fi
 	else
-		echo "      ! Cache statistics not available"
+		echo "      ! No cache device available for statistics"
 	fi
 
 	cat <<EOF
@@ -654,16 +680,16 @@ main() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		-h | --help)
-			show_help
-			exit 0
-			;;
-		-f | --force) FORCE=true ;;
-		-u | --uninstall) action="uninstall" ;;
-		-g | --global-uninstall) action="global-uninstall" ;;
-		-v | --verify) action="verify" ;;
-		-c | --check-alignment) action="check-alignment" ;;
-		*) log ERR "Unknown option: $1. Use -h for help." ;;
+			-h | --help)
+				show_help
+				exit 0
+				;;
+			-f | --force) FORCE=true ;;
+			-u | --uninstall) action="uninstall" ;;
+			-g | --global-uninstall) action="global-uninstall" ;;
+			-v | --verify) action="verify" ;;
+			-c | --check-alignment) action="check-alignment" ;;
+			*) log ERR "Unknown option: $1. Use -h for help." ;;
 		esac
 		shift
 	done
@@ -671,20 +697,28 @@ main() {
 	export FORCE
 
 	case "$action" in
-	install)
-		check_prerequisites
-		install_rapiddisk
-		;;
-	uninstall)
-		check_uninstall_prerequisites
-		uninstall_rapiddisk
-		;;
-	global-uninstall)
-		check_uninstall_prerequisites
-		global_uninstall
-		;;
-	verify) verify_rapiddisk ;;
-	check-alignment) show_alignment_info ;;
+		install)
+			check_prerequisites
+			install_rapiddisk
+			;;
+		uninstall)
+			check_root
+			check_uninstall_prerequisites
+			uninstall_rapiddisk
+			;;
+		global-uninstall)
+			check_root
+			check_uninstall_prerequisites
+			global_uninstall
+			;;
+		verify)
+			check_root
+			verify_rapiddisk
+			;;
+		check-alignment)
+			check_root
+			show_alignment_info
+			;;
 	esac
 }
 
