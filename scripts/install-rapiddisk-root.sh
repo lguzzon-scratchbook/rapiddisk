@@ -133,9 +133,63 @@ get_cache_mode() {
     esac
 }
 
+check_rapiddisk_built() {
+    if command -v rapiddisk &>/dev/null; then
+        log INF "rapiddisk command found"
+        return 0
+    fi
+
+    local project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+    local rapiddisk_bin="$project_root/src/rapiddisk"
+
+    if [[ -x "$rapiddisk_bin" ]]; then
+        export PATH="$project_root/src:$PATH"
+        log INF "Using local rapiddisk binary"
+        return 0
+    fi
+
+    return 1
+}
+
+build_rapiddisk() {
+    local project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+    log INF "rapiddisk not found - building from source..."
+    log INF "Project root: $project_root"
+
+    cd "$project_root" || log ERR "Cannot change to project root"
+
+    local make_targets=("install")
+    local dependencies_missing=()
+
+    # Check for module build dependencies
+    [[ ! -d "/lib/modules/$(uname -r)/build" ]] && dependencies_missing+=("kernel headers for $(uname -r)")
+
+    if [[ ${#dependencies_missing[@]} -gt 0 ]]; then
+        log WRN "Missing dependencies: ${dependencies_missing[*]}"
+        log WRN "Falling back to tools-only build (rapiddisk command only)"
+        make_targets=("tools-install")
+    fi
+
+    for target in "${make_targets[@]}"; do
+        log INF "Running: make $target"
+        if ! make "$target"; then
+            log ERR "Build failed. Install dependencies manually or use package manager."
+        fi
+    done
+
+    # Add to PATH if built successfully
+    export PATH="$project_root/src:$PATH"
+    cd - >/dev/null || true
+    log INF "rapiddisk built successfully"
+}
+
 check_prerequisites() {
     log INF "Checking prerequisites..."
-    command -v rapiddisk &>/dev/null || log ERR "rapiddisk command not found"
+
+    check_rapiddisk_built || build_rapiddisk
+    command -v rapiddisk &>/dev/null || log ERR "rapiddisk command not available after build"
+
     [[ -x "$RAPIDDISK_BOOT" ]] || log ERR "rapiddisk-on-boot not found at: $RAPIDDISK_BOOT"
     [[ -f /etc/os-release ]] || log ERR "Cannot detect OS. /etc/os-release not found"
 
