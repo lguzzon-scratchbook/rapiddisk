@@ -16,8 +16,8 @@ log() {
     local msg=$2
     case $level in
         ERR) echo -e "${RED}ERROR: $msg${NC}" >&2; exit 1 ;;
-        INF) echo -e "${GREEN}INFO: $msg${NC}" ;;
-        WRN) echo -e "${YELLOW}WARN: $msg${NC}" ;;
+        INF) echo -e "${GREEN}INFO: $msg${NC}" >&2 ;;
+        WRN) echo -e "${YELLOW}WARN: $msg${NC}" >&2 ;;
     esac
 }
 
@@ -245,6 +245,40 @@ check_prerequisites() {
     log INF "Prerequisites check passed"
 }
 
+show_disk_info() {
+    local root_device="$1"
+    local root_fs_size
+    local root_fs_type
+
+    root_fs_size=$(df -h / | awk 'NR==2 {print $2}')
+    root_fs_type=$(df -T / | awk 'NR==2 {print $2}')
+
+    cat << EOF
+
+========================================
+Disk Information:
+========================================
+Root Device:    $root_device
+Root Size:      $root_fs_size
+Root Type:      $root_fs_type
+
+Other Disks:
+EOF
+
+    lsblk -o NAME,SIZE,TYPE,MOUNTPOINT -rn | while read -r name size type mountpoint; do
+        if [[ "$mountpoint" == "/" ]]; then
+            continue
+        fi
+        if [[ -n "$mountpoint" && "$type" != "rom" && "$type" != "part" ]]; then
+            local fs_type
+            fs_type=$(df -T "$mountpoint" 2>/dev/null | awk 'NR==2 {print $2}' || echo "-")
+            printf "  %-15s %-10s %-12s %s\n" "$name" "$size" "$fs_type" "$mountpoint"
+        fi
+    done
+
+    echo "========================================"
+}
+
 install_rapiddisk() {
     log INF "Starting rapiddisk installation on root device..."
 
@@ -253,12 +287,13 @@ install_rapiddisk() {
     local root_device=$(detect_root_device)
     local cache_mode=$(get_cache_mode "$root_device")
 
+    show_disk_info "$root_device"
+
     cat << EOF
 
 ========================================
-Installation Summary:
+Cache Configuration:
 ========================================
-Root Device:    $root_device
 Cache Size:     ${cache_size}MB
 Cache Mode:     ${cache_mode}
 Kernel Version: $kernel_version
@@ -275,8 +310,8 @@ EOF
     "$RAPIDDISK_BOOT" "${args[@]}"
 
     cat << EOF
-${GREEN}Installation completed successfully!${NC}
-${YELLOW}A REBOOT IS REQUIRED to activate rapiddisk.${NC}
+${GREEN}Installation completed successfully!
+A REBOOT IS REQUIRED to activate rapiddisk.
 
 After reboot, verify with:
   sudo $(basename "$0") --verify
