@@ -151,6 +151,47 @@ check_rapiddisk_built() {
     return 1
 }
 
+install_dependencies() {
+    local pkg_manager=""
+    local packages=()
+
+    # Detect package manager
+    if command -v apt-get &>/dev/null; then
+        pkg_manager="apt"
+        packages+=("build-essential" "libpcre2-dev" "pcre2-utils" "libjansson-dev" "libdevmapper-dev" "libmicrohttpd-dev")
+        [[ ! -d "/lib/modules/$(uname -r)/build" ]] && packages+=("linux-headers-$(uname -r)")
+    elif command -v dnf &>/dev/null; then
+        pkg_manager="dnf"
+        packages+=("gcc" "make" "pcre2-devel" "pcre2-tools" "jansson-devel" "device-mapper-devel" "libmicrohttpd-devel")
+        [[ ! -d "/lib/modules/$(uname -r)/build" ]] && packages+=("kernel-devel")
+    elif command -v yum &>/dev/null; then
+        pkg_manager="yum"
+        packages+=("gcc" "make" "pcre2-devel" "pcre2-tools" "jansson-devel" "device-mapper-devel" "libmicrohttpd-devel")
+        [[ ! -d "/lib/modules/$(uname -r)/build" ]] && packages+=("kernel-devel")
+    else
+        log WRN "No supported package manager found (apt/dnf/yum)"
+        return 1
+    fi
+
+    if [[ ${#packages[@]} -eq 0 ]]; then
+        log INF "All dependencies already installed"
+        return 0
+    fi
+
+    log INF "Installing dependencies: ${packages[*]}"
+    case "$pkg_manager" in
+        apt)
+            if ! apt-get update -qq; then
+                log WRN "apt-get update failed, continuing..."
+            fi
+            apt-get install -y "${packages[@]}"
+            ;;
+        dnf|yum)
+            "$pkg_manager" install -y "${packages[@]}"
+            ;;
+    esac
+}
+
 build_rapiddisk() {
     local project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -158,6 +199,9 @@ build_rapiddisk() {
     log INF "Project root: $project_root"
 
     cd "$project_root" || log ERR "Cannot change to project root"
+
+    log INF "Installing build dependencies..."
+    install_dependencies
 
     local make_targets=("install")
     local dependencies_missing=()
